@@ -1,12 +1,14 @@
 import asyncio
 import sqlite3
 import logging
+import uuid
 from datetime import datetime, timedelta
 from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
+from yookassa import Configuration, Payment
 
 # ========== КОНФИГ ==========
 BOT_TOKEN = "8790780448:AAGAXm20PIGzYT55dKRENizts6iZ7KVULxQ"
@@ -15,7 +17,12 @@ OWNER_ID = 549639607
 FREE_LIMIT = 3
 SUPPORT_URL = "https://t.me/Boss023rus"
 CHANNEL = "@PostGeniusChannel"
-YOOKASSA_TOKEN = "1363324:live_-RKE9nsi8wZiM-5f00z78E84OYSi3M0Dj9w_-pE0Mvw"
+
+# ========== ЮКАССА ==========
+YOOKASSA_SHOP_ID = "1363324"
+YOOKASSA_SECRET = "live_-RKE9nsi8wZiM-5f00z78E84OYSi3M0Dj9w_-pE0Mvw"
+Configuration.account_id = YOOKASSA_SHOP_ID
+Configuration.secret_key = YOOKASSA_SECRET
 
 # ========== ЛОГИ ==========
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +57,12 @@ def init_db():
         strategy_trial INTEGER DEFAULT 0,
         hooks_trial INTEGER DEFAULT 0,
         review_trial INTEGER DEFAULT 0
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS pending_payments (
+        payment_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        plan TEXT,
+        created_at TEXT
     )""")
     conn.commit()
     conn.close()
@@ -133,6 +146,29 @@ def set_trial(user_id, field):
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO trials (user_id) VALUES (?)", (user_id,))
     c.execute(f"UPDATE trials SET {field}=1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def save_pending_payment(payment_id, user_id, plan):
+    conn = sqlite3.connect("postgenius.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO pending_payments (payment_id, user_id, plan, created_at) VALUES (?,?,?,?)",
+              (payment_id, user_id, plan, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_pending_payments():
+    conn = sqlite3.connect("postgenius.db")
+    c = conn.cursor()
+    c.execute("SELECT payment_id, user_id, plan FROM pending_payments")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def delete_pending_payment(payment_id):
+    conn = sqlite3.connect("postgenius.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM pending_payments WHERE payment_id=?", (payment_id,))
     conn.commit()
     conn.close()
 
@@ -280,6 +316,38 @@ async def check_pro_access(user_id, trial_field):
     if trials[trial_field] == 0:
         return 'trial'
     return 'trial_used'
+
+# ========== ФОНОВАЯ ПРОВЕРКА ОПЛАТЫ ==========
+async def check_payments_loop():
+    while True:
+        await asyncio.sleep(15)
+        try:
+            pending = get_pending_payments()
+            for payment_id, user_id, plan in pending:
+                try:
+                    payment = Payment.find_one(payment_id)
+                    if payment.status == "succeeded":
+                        set_subscription(user_id, plan, 30)
+                        delete_pending_payment(payment_id)
+                        plan_name = "🟢 Старт" if plan == "pg_start" else "🔥 Про"
+                        await bot.send_message(
+                            user_id,
+                            f"✅ Оплата прошла успешно!\n\n"
+                            f"Тариф {plan_name} активирован на 30 дней.\n\n"
+                            f"Пользуйся на здоровье! 🚀",
+                            reply_markup=main_menu()
+                        )
+                    elif payment.status == "canceled":
+                        delete_pending_payment(payment_id)
+                        await bot.send_message(
+                            user_id,
+                            "❌ Платёж отменён. Попробуй снова — нажми 💎 Тарифы и оплата.",
+                            reply_markup=main_menu()
+                        )
+                except Exception as e:
+                    logging.error(f"Ошибка проверки платежа {payment_id}: {e}")
+        except Exception as e:
+            logging.error(f"Ошибка в check_payments_loop: {e}")
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -533,49 +601,62 @@ async def tariffs(callback: CallbackQuery):
 @dp.callback_query(F.data == "pay_start")
 async def pay_start(callback: CallbackQuery):
     user_id = callback.from_user.id
-    await bot.send_invoice(
-        chat_id=user_id,
-        title="Тариф Старт — PostGenius",
-        description="Доступ на 30 дней: посты, идеи, контент-план, stories, reels, реклама",
-        payload="pg_start",
-        provider_token=YOOKASSA_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="Старт 30 дней", amount=19000)],
-        start_parameter="start_payment"
-    )
     await callback.answer()
+    try:
+        payment = Payment.create({
+            "amount": {"value": "190.00", "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": "https://t.me/PostGeniusHelperBot"},
+            "capture": True,
+            "description": f"Тариф Старт PostGenius — пользователь {user_id}",
+            "metadata": {"user_id": user_id, "plan": "pg_start"}
+        }, str(uuid.uuid4()))
+        save_pending_payment(payment.id, user_id, "pg_start")
+        pay_url = payment.confirmation.confirmation_url
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить 190 руб", url=pay_url)],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")]
+        ])
+        await callback.message.answer(
+            "🟢 Тариф Старт — 190 руб / 30 дней\n\n"
+            "Нажми кнопку ниже для оплаты.\n"
+            "После оплаты подписка активируется автоматически в течение 15 секунд! ✅",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logging.error(f"Ошибка создания платежа: {e}")
+        await callback.message.answer(
+            f"❌ Ошибка при создании платежа. Попробуй позже или обратись в поддержку: {SUPPORT_URL}"
+        )
 
 @dp.callback_query(F.data == "pay_pro")
 async def pay_pro(callback: CallbackQuery):
     user_id = callback.from_user.id
-    await bot.send_invoice(
-        chat_id=user_id,
-        title="Тариф Про — PostGenius",
-        description="Доступ на 30 дней: все функции без ограничений",
-        payload="pg_pro",
-        provider_token=YOOKASSA_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="Про 30 дней", amount=39000)],
-        start_parameter="pro_payment"
-    )
     await callback.answer()
-
-@dp.pre_checkout_query()
-async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await pre_checkout_query.answer(ok=True)
-
-@dp.message(F.successful_payment)
-async def successful_payment(message: Message):
-    user_id = message.from_user.id
-    plan = message.successful_payment.invoice_payload
-    set_subscription(user_id, plan, 30)
-    plan_name = "🟢 Старт" if plan == "pg_start" else "🔥 Про"
-    await message.answer(
-        f"✅ Оплата прошла успешно!\n\n"
-        f"Тариф {plan_name} активирован на 30 дней.\n\n"
-        f"Пользуйся на здоровье! 🚀",
-        reply_markup=main_menu()
-    )
+    try:
+        payment = Payment.create({
+            "amount": {"value": "390.00", "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": "https://t.me/PostGeniusHelperBot"},
+            "capture": True,
+            "description": f"Тариф Про PostGenius — пользователь {user_id}",
+            "metadata": {"user_id": user_id, "plan": "pg_pro"}
+        }, str(uuid.uuid4()))
+        save_pending_payment(payment.id, user_id, "pg_pro")
+        pay_url = payment.confirmation.confirmation_url
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить 390 руб", url=pay_url)],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")]
+        ])
+        await callback.message.answer(
+            "🔥 Тариф Про — 390 руб / 30 дней\n\n"
+            "Нажми кнопку ниже для оплаты.\n"
+            "После оплаты подписка активируется автоматически в течение 15 секунд! ✅",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logging.error(f"Ошибка создания платежа: {e}")
+        await callback.message.answer(
+            f"❌ Ошибка при создании платежа. Попробуй позже или обратись в поддержку: {SUPPORT_URL}"
+        )
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -675,6 +756,7 @@ async def handle_photo(message: Message):
 
 async def main():
     init_db()
+    asyncio.create_task(check_payments_loop())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
