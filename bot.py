@@ -614,7 +614,9 @@ async def pay_start(callback: CallbackQuery):
                     "description": "Тариф Старт PostGenius 30 дней",
                     "quantity": "1.00",
                     "amount": {"value": "190.00", "currency": "RUB"},
-                    "vat_code": 1
+                    "vat_code": 1,
+                    "payment_subject": "service",
+                    "payment_mode": "full_payment"
                 }]
             },
             "metadata": {"user_id": user_id, "plan": "pg_start"}
@@ -653,7 +655,9 @@ async def pay_pro(callback: CallbackQuery):
                     "description": "Тариф Про PostGenius 30 дней",
                     "quantity": "1.00",
                     "amount": {"value": "390.00", "currency": "RUB"},
-                    "vat_code": 1
+                    "vat_code": 1,
+                    "payment_subject": "service",
+                    "payment_mode": "full_payment"
                 }]
             },
             "metadata": {"user_id": user_id, "plan": "pg_pro"}
