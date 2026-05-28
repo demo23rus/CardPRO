@@ -599,11 +599,35 @@ async def handle_text(message: Message):
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = message.from_user.id
-    set_user_step(user_id, step='ждём описание фото')
-    await message.answer(
-        "📸 Фото получено!\n\nТеперь напиши о чём оно — я сделаю подпись:",
-        reply_markup=back_menu()
-    )
+    access, plan = await check_limit(user_id)
+    if access == 'limit':
+        await message.answer(
+            "🚫 Лимит 3 бесплатных запросов исчерпан.\n\nВыбери тариф:\n🟢 Старт — 190 руб/мес\n🔥 Про — 490 руб/мес",
+            reply_markup=tariffs_menu()
+        )
+        return
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+    await message.answer("⏳ Анализирую фото...")
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": file_url}},
+                    {"type": "text", "text": "Напиши цепляющую подпись к этому фото для Instagram на русском языке. 100-150 слов, 5-7 хэштегов."}
+                ]
+            }],
+            max_tokens=1000
+        )
+        result = response.choices[0].message.content
+        if access == 'ok':
+            increment_requests(user_id)
+        await message.answer(result, reply_markup=back_menu())
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}", reply_markup=back_menu())
 
 async def main():
     init_db()
