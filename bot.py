@@ -16,7 +16,7 @@ from google.oauth2.service_account import Credentials
 BOT_TOKEN = "8790780448:AAGAXm20PIGzYT55dKRENizts6iZ7KVULxQ"
 OPENAI_KEY = "sk-mfvVI3QN2uQvXPlhMkAeUUzmbjK5aQzj"
 OWNER_ID = 549639607
-FREE_LIMIT = 3
+FREE_LIMIT = 10
 SUPPORT_URL = "https://t.me/Boss023rus"
 CHANNEL = "@PostGeniusChannel"
 
@@ -335,7 +335,7 @@ WELCOME_TEXT = """Привет, {name}! 👋 Я PostGenius — твой SMM-по
 🪝 20 цепляющих хуков для постов
 📊 Разбор твоего поста по 10 пунктам
 
-🎁 3 запроса бесплатно — попробуй прямо сейчас
+🎁 10 запросов бесплатно — попробуй прямо сейчас
 
 📢 Ежедневные SMM лайфхаки: {channel}
 
@@ -350,14 +350,15 @@ async def check_limit(user_id):
         return 'ok', None
     return 'limit', None
 
-async def check_pro_access(user_id, trial_field):
+async def check_pro_access(user_id, trial_field=None):
     plan, sub_end = get_subscription(user_id)
     if plan == 'pg_pro':
         return 'pro'
     if plan == 'pg_start':
         return 'start_block'
-    trials = get_trials(user_id)
-    if trials[trial_field] == 0:
+    # Проверяем бесплатный лимит
+    count = get_requests(user_id)
+    if count < FREE_LIMIT:
         return 'trial'
     return 'trial_used'
 
@@ -540,14 +541,7 @@ async def ads_platform(callback: CallbackQuery):
 async def competitor_analysis(callback: CallbackQuery):
     user_id = callback.from_user.id
     access = await check_pro_access(user_id, 'comp_trial')
-    if access == 'pro':
-        set_user_step(user_id, step='ждём нишу конкурентов')
-        await callback.message.answer(
-            "🕵️ Анализ конкурентов\n\nВведи нишу и платформу:\n\nНапример: кофейня Instagram",
-            reply_markup=back_menu()
-        )
-    elif access == 'trial':
-        set_trial(user_id, 'comp_trial')
+    if access in ('pro', 'trial'):
         set_user_step(user_id, step='ждём нишу конкурентов')
         await callback.message.answer(
             "🕵️ Анализ конкурентов\n\nВведи нишу и платформу:\n\nНапример: кофейня Instagram",
@@ -560,7 +554,7 @@ async def competitor_analysis(callback: CallbackQuery):
         )
     else:
         await callback.message.answer(
-            "🔒 Вы уже использовали бесплатную попытку анализа конкурентов.\n\n🔥 Про — 390 руб / 1 месяц\nВсе функции без ограничений",
+            "🚫 Бесплатные запросы закончились.\n\n🔥 Про — 390 руб / 1 месяц\nВсе функции без ограничений",
             reply_markup=upgrade_pro_menu()
         )
     await callback.answer()
@@ -570,8 +564,6 @@ async def strategy(callback: CallbackQuery):
     user_id = callback.from_user.id
     access = await check_pro_access(user_id, 'strategy_trial')
     if access in ('pro', 'trial'):
-        if access == 'trial':
-            set_trial(user_id, 'strategy_trial')
         set_user_step(user_id, step='ждём нишу стратегии')
         await callback.message.answer(
             "📈 Стратегия продвижения\n\nВведи нишу и платформу:\n\nНапример: кофейня Instagram",
@@ -584,7 +576,7 @@ async def strategy(callback: CallbackQuery):
         )
     else:
         await callback.message.answer(
-            "🔒 Вы уже использовали бесплатную попытку стратегии продвижения.\n\n🔥 Про — 390 руб / 1 месяц",
+            "🚫 Бесплатные запросы закончились.\n\n🔥 Про — 390 руб / 1 месяц",
             reply_markup=upgrade_pro_menu()
         )
     await callback.answer()
@@ -594,8 +586,6 @@ async def hooks(callback: CallbackQuery):
     user_id = callback.from_user.id
     access = await check_pro_access(user_id, 'hooks_trial')
     if access in ('pro', 'trial'):
-        if access == 'trial':
-            set_trial(user_id, 'hooks_trial')
         set_user_step(user_id, step='ждём тему хуков')
         await callback.message.answer(
             "🪝 Генератор хуков\n\nВведи тему поста:\n\nНапример: как выбрать кофе",
@@ -608,7 +598,7 @@ async def hooks(callback: CallbackQuery):
         )
     else:
         await callback.message.answer(
-            "🔒 Вы уже использовали бесплатную попытку генератора хуков.\n\n🔥 Про — 390 руб / 1 месяц",
+            "🚫 Бесплатные запросы закончились.\n\n🔥 Про — 390 руб / 1 месяц",
             reply_markup=upgrade_pro_menu()
         )
     await callback.answer()
@@ -618,8 +608,6 @@ async def post_review(callback: CallbackQuery):
     user_id = callback.from_user.id
     access = await check_pro_access(user_id, 'review_trial')
     if access in ('pro', 'trial'):
-        if access == 'trial':
-            set_trial(user_id, 'review_trial')
         set_user_step(user_id, step='ждём пост для разбора')
         await callback.message.answer(
             "📊 Разбор поста\n\nВставь свой пост — я разберу его по 10 пунктам:\n\n(просто скопируй текст и пришли)",
@@ -632,7 +620,7 @@ async def post_review(callback: CallbackQuery):
         )
     else:
         await callback.message.answer(
-            "🔒 Вы уже использовали бесплатную попытку разбора поста.\n\n🔥 Про — 390 руб / 1 месяц",
+            "🚫 Бесплатные запросы закончились.\n\n🔥 Про — 390 руб / 1 месяц",
             reply_markup=upgrade_pro_menu()
         )
     await callback.answer()
@@ -645,7 +633,7 @@ async def tariffs(callback: CallbackQuery):
         "Посты, идеи, контент-план, stories, reels, реклама, подписи к фото\n\n"
         "🔥 Про — 390 руб / 1 месяц\n"
         "Все функции бота без ограничений\n\n"
-        "🎁 3 запроса бесплатно для новых пользователей",
+        "🎁 10 запросов бесплатно — попробуй весь функционал!",
         reply_markup=tariffs_menu()
     )
     await callback.answer()
