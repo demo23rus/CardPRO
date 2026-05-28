@@ -608,6 +608,15 @@ async def pay_start(callback: CallbackQuery):
             "confirmation": {"type": "redirect", "return_url": "https://t.me/PostGeniusHelperBot"},
             "capture": True,
             "description": f"Тариф Старт PostGenius — пользователь {user_id}",
+            "receipt": {
+                "customer": {"email": "client@postgenius.ru"},
+                "items": [{
+                    "description": "Тариф Старт PostGenius 30 дней",
+                    "quantity": "1.00",
+                    "amount": {"value": "190.00", "currency": "RUB"},
+                    "vat_code": 1
+                }]
+            },
             "metadata": {"user_id": user_id, "plan": "pg_start"}
         }, str(uuid.uuid4()))
         save_pending_payment(payment.id, user_id, "pg_start")
@@ -638,6 +647,15 @@ async def pay_pro(callback: CallbackQuery):
             "confirmation": {"type": "redirect", "return_url": "https://t.me/PostGeniusHelperBot"},
             "capture": True,
             "description": f"Тариф Про PostGenius — пользователь {user_id}",
+            "receipt": {
+                "customer": {"email": "client@postgenius.ru"},
+                "items": [{
+                    "description": "Тариф Про PostGenius 30 дней",
+                    "quantity": "1.00",
+                    "amount": {"value": "390.00", "currency": "RUB"},
+                    "vat_code": 1
+                }]
+            },
             "metadata": {"user_id": user_id, "plan": "pg_pro"}
         }, str(uuid.uuid4()))
         save_pending_payment(payment.id, user_id, "pg_pro")
