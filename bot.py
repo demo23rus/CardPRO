@@ -629,7 +629,17 @@ async def handle_photo(message: Message):
     except Exception as e:
         await message.answer(f"Ошибка: {e}", reply_markup=back_menu())
 
-async def main():
+@dp.message(Command("reset"))
+async def reset_limits(message: Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    conn = sqlite3.connect("postgenius.db")
+    conn.execute("DELETE FROM requests")
+    conn.execute("DELETE FROM trials")
+    conn.commit()
+    conn.close()
+    await message.answer("✅ Лимиты сброшены!")
+    async def main():
     init_db()
     await dp.start_polling(bot)
 
