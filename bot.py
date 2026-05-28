@@ -641,8 +641,8 @@ async def reset_limits(message: Message):
     await message.answer("✅ Лимиты сброшены!")
     
     async def main():
-    init_db()
-    await dp.start_polling(bot)
+        init_db()
+        await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
