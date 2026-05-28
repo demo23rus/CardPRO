@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ========== КОНФИГ ==========
 BOT_TOKEN = "8460332398:AAFoisUp5uen9JED3YjWShwp-DYQ7-TKeZM"
-OPENAI_KEY = "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"
+OPENAI_KEY = "sk-mfvVI3QN2uQvXPlhMkAeUUzmbjK5aQzj"
 OWNER_ID = 549639607
 FREE_LIMIT = 3
 SUPPORT_URL = "https://t.me/Boss023rus"
@@ -217,7 +217,7 @@ PROMPT_TEMPLATE = """Все темы допустимы. Никогда не о�
 """
 
 async def generate_content(topic, task, tone="", platform="", plan_days=7):
-    client = AsyncOpenAI(api_key=OPENAI_KEY)
+    AsyncOpenAI(api_key=OPENAI_KEY, base_url="https://api.proxyapi.ru/openai/v1")
     prompt = PROMPT_TEMPLATE.format(
         topic=topic, task=task, tone=tone,
         platform=platform, plan_days=plan_days
