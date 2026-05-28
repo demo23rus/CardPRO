@@ -9,6 +9,8 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from yookassa import Configuration, Payment
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ========== КОНФИГ ==========
 BOT_TOKEN = "8790780448:AAGAXm20PIGzYT55dKRENizts6iZ7KVULxQ"
@@ -23,6 +25,48 @@ YOOKASSA_SHOP_ID = "1363324"
 YOOKASSA_SECRET = "live_-RKE9nsi8wZiM-5f00z78E84OYSi3M0Dj9w_-pE0Mvw"
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET
+
+# ========== GOOGLE SHEETS ==========
+SPREADSHEET_ID = "1PE7CaFuWOe_eygQqIoMAmUdJBtATbIaNfZR4cvarPCA"
+CREDENTIALS_FILE = "/root/google_credentials.json"
+
+def get_sheet():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID).sheet1
+
+def sheets_add_user(user_id, username, first_name):
+    try:
+        sheet = get_sheet()
+        col = sheet.col_values(1)
+        if not col or col[0] != "ID":
+            sheet.insert_row(["ID", "Username", "Имя", "Дата регистрации", "Тариф", "Дата оплаты"], 1)
+            col = sheet.col_values(1)
+        if str(user_id) in col:
+            return
+        sheet.append_row([
+            str(user_id),
+            f"@{username}" if username else "—",
+            first_name or "—",
+            datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "Бесплатный",
+            "—"
+        ])
+    except Exception as e:
+        logging.error(f"Ошибка Google Sheets (новый пользователь): {e}")
+
+def sheets_update_subscription(user_id, plan):
+    try:
+        sheet = get_sheet()
+        col = sheet.col_values(1)
+        if str(user_id) in col:
+            row = col.index(str(user_id)) + 1
+            plan_name = "🟢 Старт" if plan == "pg_start" else "🔥 Про"
+            sheet.update_cell(row, 5, plan_name)
+            sheet.update_cell(row, 6, datetime.now().strftime("%d.%m.%Y %H:%M"))
+    except Exception as e:
+        logging.error(f"Ошибка Google Sheets (подписка): {e}")
 
 # ========== ЛОГИ ==========
 logging.basicConfig(level=logging.INFO)
@@ -329,6 +373,7 @@ async def check_payments_loop():
                     if payment.status == "succeeded":
                         set_subscription(user_id, plan, 30)
                         delete_pending_payment(payment_id)
+                        asyncio.create_task(asyncio.to_thread(sheets_update_subscription, user_id, plan))
                         plan_name = "🟢 Старт" if plan == "pg_start" else "🔥 Про"
                         await bot.send_message(
                             user_id,
@@ -355,6 +400,12 @@ async def cmd_start(message: Message):
     get_user(user_id)
     set_user_step(user_id, step='idle')
     name = message.from_user.first_name or "друг"
+    # Записываем в Google Sheets
+    asyncio.create_task(asyncio.to_thread(
+        sheets_add_user, user_id,
+        message.from_user.username,
+        message.from_user.first_name
+    ))
     await message.answer(
         WELCOME_TEXT.format(name=name, channel=CHANNEL),
         reply_markup=main_menu()
@@ -382,6 +433,7 @@ async def activate_sub(message: Message):
     user_id = int(parts[1])
     plan = parts[2]
     set_subscription(user_id, plan, 30)
+    asyncio.create_task(asyncio.to_thread(sheets_update_subscription, user_id, plan))
     await message.answer(f"✅ Подписка {plan} активирована для {user_id} на 30 дней!")
 
 @dp.callback_query(F.data == "back_menu")
