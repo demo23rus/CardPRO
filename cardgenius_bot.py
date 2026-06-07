@@ -466,7 +466,11 @@ async def generate_card_from_photo(platform, image_url):
         "Пишешь только на русском. Никогда не начинай с вводных слов типа 'Конечно', 'Отлично', 'Вот'. "
         "Сразу выдаёшь результат в нужном формате.\n\n" + rules
     )
-    return await gpt_vision(system, "Определи товар на фото и создай полную карточку для него.", image_url)
+    user_prompt = (
+        "На фото изображён товар. Опиши его тип, назначение, характеристики и создай полную карточку. "
+        "Не упоминай бренды и логотипы. Сосредоточься на типе товара и его свойствах."
+    )
+    return await gpt_vision(system, user_prompt, image_url)
 
 async def generate_review_reply(review_text):
     system = (
@@ -1265,7 +1269,9 @@ PLATFORM_STYLES = {
 async def get_infographic_data(image_url: str, platform: str) -> dict:
     platform_label = PLATFORM_STYLES[platform]["label"]
     prompt = (
-        "Ты эксперт по маркетплейсам. Анализируй фото товара и верни ТОЛЬКО JSON без markdown.\n"
+        "Ты помощник по созданию карточек товаров. На фото изображён товар. "
+        "Определи тип товара и его назначение (не упоминай бренды). "
+        "Верни ТОЛЬКО JSON без markdown, без пояснений.\n"
         "Платформа: " + platform_label + "\n"
         'Формат JSON строго:\n'
         '{\n'
