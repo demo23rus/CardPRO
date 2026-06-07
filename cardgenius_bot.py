@@ -437,12 +437,17 @@ async def gpt(system, user_text, model="gpt-4o", max_tokens=1500):
     return resp.choices[0].message.content.strip()
 
 async def gpt_vision(system, user_text, image_url, max_tokens=1500):
+    import base64, httpx
+    async with httpx.AsyncClient() as hc:
+        r = await hc.get(image_url)
+        img_bytes = r.content
+    b64 = base64.b64encode(img_bytes).decode()
     resp = await client.chat.completions.create(
         model="gpt-4o",
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 {"type": "text", "text": system + "\n\n" + user_text}
             ]
         }],
@@ -1281,12 +1286,17 @@ async def get_infographic_data(image_url: str, platform: str) -> dict:
         '  "tag": "короткий слоган до 25 символов"\n'
         '}'
     )
+    import base64, httpx
+    async with httpx.AsyncClient() as hc:
+        r = await hc.get(image_url)
+        img_bytes = r.content
+    b64 = base64.b64encode(img_bytes).decode()
     resp = await client.chat.completions.create(
         model="gpt-4o",
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 {"type": "text", "text": prompt}
             ]
         }],
