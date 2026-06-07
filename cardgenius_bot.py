@@ -2,8 +2,11 @@ import asyncio
 import logging
 import sqlite3
 import uuid
+import io
+import textwrap
 from datetime import datetime, timedelta
 from openai import AsyncOpenAI
+from PIL import Image, ImageDraw, ImageFont
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.filters import CommandStart, Command
@@ -75,6 +78,10 @@ class UnitStates(StatesGroup):
 
 class AdStates(StatesGroup):
     waiting_product  = State()
+
+class InfographicStates(StatesGroup):
+    choose_platform  = State()
+    waiting_photo    = State()
 
 # ─── БАЗА ДАННЫХ ─────────────────────────────────────────────
 DB = "/root/cardgenius.db"
@@ -282,6 +289,7 @@ def is_paid(user_id):
 def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📦 Создать карточку", callback_data="make_card")],
+        [InlineKeyboardButton(text="🖼 Инфографика из фото 🔒 Про", callback_data="make_infographic")],
         [InlineKeyboardButton(text="🧮 Юнит-экономика", callback_data="unit_eco"),
          InlineKeyboardButton(text="⭐️ Ответ на отзыв", callback_data="review_reply")],
         [InlineKeyboardButton(text="🔍 Аудит карточки 🔒 Про", callback_data="audit_card"),
@@ -344,6 +352,14 @@ def kb_scheme():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="FBO (склад МП)", callback_data="scheme_fbo"),
          InlineKeyboardButton(text="FBS (свой склад)", callback_data="scheme_fbs")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+    ])
+
+def kb_infographic_platform():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟣 Wildberries", callback_data="infographic_wb"),
+         InlineKeyboardButton(text="🔵 Ozon", callback_data="infographic_ozon")],
+        [InlineKeyboardButton(text="🟡 Авито", callback_data="infographic_avito")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
     ])
 
@@ -1234,6 +1250,305 @@ async def check_payments_loop():
         except Exception as e:
             logging.error(f"Payment loop error: {e}")
 
+
+# ─── ИНФОГРАФИКА ─────────────────────────────────────────────
+
+FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+FONT_REG  = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+
+PLATFORM_STYLES = {
+    "wb":    {"header": (103, 0, 255),  "panel": (240, 235, 255), "label": "Wildberries"},
+    "ozon":  {"header": (0, 91, 255),   "panel": (230, 240, 255), "label": "Ozon"},
+    "avito": {"header": (0, 155, 119),  "panel": (230, 248, 242), "label": "Авито"},
+}
+
+async def get_infographic_data(image_url: str, platform: str) -> dict:
+    platform_label = PLATFORM_STYLES[platform]["label"]
+    prompt = (
+        "Ты эксперт по маркетплейсам. Анализируй фото товара и верни ТОЛЬКО JSON без markdown.\n"
+        "Платформа: " + platform_label + "\n"
+        'Формат JSON строго:\n'
+        '{\n'
+        '  "name": "краткое название товара до 40 символов",\n'
+        '  "price": "примерная цена с рублевым знаком или пустая строка",\n'
+        '  "benefits": ["выгода 1 до 28 символов", "выгода 2", "выгода 3", "выгода 4"],\n'
+        '  "tag": "короткий слоган до 25 символов"\n'
+        '}'
+    )
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "text", "text": prompt}
+            ]
+        }],
+        max_tokens=400
+    )
+    import json, re
+    raw = resp.choices[0].message.content.strip()
+    raw = re.sub(r"```json|```", "", raw).strip()
+    return json.loads(raw)
+
+def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
+    style = PLATFORM_STYLES[platform]
+    SIZE = 1000
+
+    product = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    w, h = product.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top  = (h - side) // 2
+    product = product.crop((left, top, left + side, top + side))
+    product = product.resize((SIZE, SIZE), Image.LANCZOS)
+
+    canvas = product.copy()
+    draw = ImageDraw.Draw(canvas, "RGBA")
+
+    fnt_big   = ImageFont.truetype(FONT_BOLD, 44)
+    fnt_med   = ImageFont.truetype(FONT_BOLD, 30)
+    fnt_small = ImageFont.truetype(FONT_REG, 25)
+    fnt_tag   = ImageFont.truetype(FONT_BOLD, 28)
+
+    hc = style["header"]
+    pc = style["panel"]
+
+    # Верхняя плашка
+    draw.rectangle([(0, 0), (SIZE, 88)], fill=(hc[0], hc[1], hc[2], 220))
+    name = data.get("name", "Товар")[:38]
+    draw.text((18, 20), name, font=fnt_big, fill="white")
+
+    # Правая панель
+    px = SIZE - 310
+    draw.rectangle([(px, 90), (SIZE, SIZE - 82)], fill=(pc[0], pc[1], pc[2], 210))
+    draw.text((px + 12, 104), "Преимущества:", font=fnt_med, fill=(hc[0], hc[1], hc[2]))
+    benefits = data.get("benefits", [])[:4]
+    for i, b in enumerate(benefits):
+        y = 160 + i * 70
+        draw.ellipse([(px + 10, y), (px + 34, y + 24)], fill=(hc[0], hc[1], hc[2]))
+        draw.text((px + 14, y + 2), "v", font=fnt_small, fill="white")
+        for li, ln in enumerate(textwrap.wrap(b[:28], 15)[:2]):
+            draw.text((px + 42, y + li * 26), ln, font=fnt_small, fill=(20, 20, 20))
+
+    # Нижняя плашка
+    draw.rectangle([(0, SIZE - 82), (SIZE, SIZE)], fill=(hc[0], hc[1], hc[2], 220))
+    price = data.get("price", "")
+    tag   = data.get("tag", style["label"])
+    if price:
+        draw.text((18, SIZE - 65), price, font=fnt_big, fill="white")
+        draw.text((220, SIZE - 58), tag, font=fnt_tag, fill=(210, 200, 255))
+    else:
+        draw.text((18, SIZE - 65), tag, font=fnt_big, fill="white")
+
+    # Бейдж платформы
+    by = SIZE - 82 - 46
+    draw.rectangle([(0, by), (185, by + 42)], fill=(hc[0], hc[1], hc[2], 200))
+    draw.text((10, by + 7), style["label"], font=fnt_med, fill="white")
+
+    out = io.BytesIO()
+    canvas.save(out, format="JPEG", quality=92)
+    out.seek(0)
+    return out.read()
+
+@dp.callback_query(F.data == "make_infographic")
+async def make_infographic_start(call: CallbackQuery, state: FSMContext):
+    if not is_pro(call.from_user.id):
+        await call.message.answer(
+            "🔒 Инфографика из фото доступна в тарифе Про.\n\n"
+            "Бот анализирует фото, определяет товар и накладывает продающие подписи "
+            "прямо на изображение — как в топе WB и Ozon.",
+            reply_markup=kb_upgrade_pro()
+        )
+        await call.answer()
+        return
+    await state.clear()
+    await state.set_state(InfographicStates.choose_platform)
+    await call.message.answer(
+        "🖼 Инфографика из фото\n\nВыбери платформу — оформление подберём под неё:",
+        reply_markup=kb_infographic_platform()
+    )
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("infographic_"), InfographicStates.choose_platform)
+async def infographic_choose_platform(call: CallbackQuery, state: FSMContext):
+    platform = call.data.replace("infographic_", "")
+    await state.update_data(platform=platform)
+    await state.set_state(InfographicStates.waiting_photo)
+    label = PLATFORM_STYLES[platform]["label"]
+    await call.message.answer(
+        "Платформа: " + label + "\n\n"
+        "📷 Отправь фото товара — наложу продающие подписи в стиле " + label + ".",
+        reply_markup=kb_back()
+    )
+    await call.answer()
+
+@dp.message(InfographicStates.waiting_photo, F.photo)
+async def process_infographic_photo(message: Message, state: FSMContext):
+    data = await state.get_data()
+    platform = data.get("platform", "wb")
+    user_id = message.from_user.id
+    await message.answer("⏳ Анализирую фото и создаю инфографику...")
+    try:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        image_url = "https://api.telegram.org/file/bot" + BOT_TOKEN + "/" + file.file_path
+        file_bytes = await bot.download_file(file.file_path)
+        img_bytes = file_bytes.read()
+        product_data = await get_infographic_data(image_url, platform)
+        result_bytes = await asyncio.to_thread(draw_infographic, img_bytes, product_data, platform)
+        label = PLATFORM_STYLES[platform]["label"]
+        name_str  = product_data.get("name", "")
+        price_str = product_data.get("price", "")
+        price_line = ("💰 " + price_str + "\n") if price_str else ""
+        caption = (
+            "🖼 Инфографика для " + label + " готова!\n\n"
+            "📦 " + name_str + "\n"
+            + price_line +
+            "\nСохрани фото и загружай в карточку товара."
+        )
+        save_history(user_id, platform, "infographic", name_str)
+        photo_file = BufferedInputFile(result_bytes, filename="infographic.jpg")
+        await message.answer_photo(photo_file, caption=caption, reply_markup=kb_main())
+        await state.clear()
+    except Exception as e:
+        logging.error("Infographic error: " + str(e))
+        await message.answer(
+            "❌ Ошибка создания инфографики. Попробуй ещё раз или отправь другое фото.",
+            reply_markup=kb_back()
+        )
+
+
+# ─── ГОЛОСОВЫЕ СООБЩЕНИЯ ─────────────────────────────────────
+
+async def transcribe_voice(message: Message) -> str:
+    """Скачивает голосовое/аудио и транскрибирует через Whisper"""
+    if message.voice:
+        file_id = message.voice.file_id
+    elif message.audio:
+        file_id = message.audio.file_id
+    else:
+        return ""
+    file = await bot.get_file(file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    audio_data = io.BytesIO(file_bytes.read())
+    audio_data.name = "voice.ogg"
+    transcript = await client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_data,
+        language="ru"
+    )
+    return transcript.text.strip()
+
+@dp.message(CardStates.waiting_text, F.voice | F.audio)
+async def voice_card_text(message: Message, state: FSMContext):
+    await message.answer("🎙 Распознаю голосовое...")
+    text = await transcribe_voice(message)
+    if not text:
+        await message.answer("❌ Не удалось распознать. Попробуй ещё раз или напиши текстом.")
+        return
+    await message.answer(f"📝 Распознано: {text}\n\n⏳ Создаю карточку...")
+    data = await state.get_data()
+    platform = data.get("platform", "wb")
+    user_id = message.from_user.id
+    try:
+        if platform == "all":
+            results = []
+            for pl in ["wb", "ozon", "avito"]:
+                r = await generate_card_from_text(pl, text)
+                results.append(f"{'─'*30}\n{PLATFORM_NAMES[pl].upper()}\n{'─'*30}\n{r}")
+                save_history(user_id, pl, "card_text", r)
+            result = "\n\n".join(results)
+            await message.answer(result[:4000], reply_markup=kb_back())
+            if len(result) > 4000:
+                await message.answer(result[4000:8000], reply_markup=kb_back())
+        else:
+            result = await generate_card_from_text(platform, text)
+            save_history(user_id, platform, "card_text", result)
+            await message.answer(result, reply_markup=kb_regen(platform, "text"))
+        access, _ = check_access(user_id)
+        if access == "free":
+            increment_requests(user_id)
+        await state.update_data(last_desc=text, platform=platform)
+    except Exception as e:
+        logging.error(f"Voice card error: {e}")
+        await message.answer("❌ Ошибка генерации. Попробуй ещё раз.", reply_markup=kb_back())
+
+@dp.message(ReviewStates.waiting_review, F.voice | F.audio)
+async def voice_review(message: Message, state: FSMContext):
+    await message.answer("🎙 Распознаю голосовое...")
+    text = await transcribe_voice(message)
+    if not text:
+        await message.answer("❌ Не удалось распознать. Попробуй ещё раз или напиши текстом.")
+        return
+    await message.answer(f"📝 Распознано: {text}\n\n⏳ Пишу ответ...")
+    user_id = message.from_user.id
+    try:
+        result = await generate_review_reply(text)
+        save_history(user_id, "—", "review", result)
+        access, _ = check_access(user_id)
+        if access == "free":
+            increment_requests(user_id)
+        await message.answer(f"⭐️ Готовый ответ:\n\n{result}", reply_markup=kb_back())
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Voice review error: {e}")
+        await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
+
+@dp.message(AuditStates.waiting_card, F.voice | F.audio)
+async def voice_audit(message: Message, state: FSMContext):
+    await message.answer("🎙 Распознаю голосовое...")
+    text = await transcribe_voice(message)
+    if not text:
+        await message.answer("❌ Не удалось распознать. Попробуй ещё раз или напиши текстом.")
+        return
+    await message.answer(f"📝 Распознано: {text}\n\n⏳ Провожу аудит...")
+    user_id = message.from_user.id
+    try:
+        result = await generate_audit(text)
+        save_history(user_id, "—", "audit", result)
+        await message.answer(result, reply_markup=kb_back())
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Voice audit error: {e}")
+        await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
+
+@dp.message(CompetitorStates.waiting_niche, F.voice | F.audio)
+async def voice_competitors(message: Message, state: FSMContext):
+    await message.answer("🎙 Распознаю голосовое...")
+    text = await transcribe_voice(message)
+    if not text:
+        await message.answer("❌ Не удалось распознать. Попробуй ещё раз или напиши текстом.")
+        return
+    await message.answer(f"📝 Распознано: {text}\n\n⏳ Анализирую нишу...")
+    user_id = message.from_user.id
+    try:
+        result = await generate_competitors(text)
+        save_history(user_id, "WB+Ozon", "competitors", result)
+        await message.answer(result, reply_markup=kb_back())
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Voice competitors error: {e}")
+        await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
+
+@dp.message(AdStates.waiting_product, F.voice | F.audio)
+async def voice_ad(message: Message, state: FSMContext):
+    await message.answer("🎙 Распознаю голосовое...")
+    text = await transcribe_voice(message)
+    if not text:
+        await message.answer("❌ Не удалось распознать. Попробуй ещё раз или напиши текстом.")
+        return
+    await message.answer(f"📝 Распознано: {text}\n\n⏳ Создаю рекламный текст...")
+    user_id = message.from_user.id
+    try:
+        result = await generate_ad_text(text)
+        save_history(user_id, "—", "ad_text", result)
+        await message.answer(result, reply_markup=kb_back())
+        await state.clear()
+    except Exception as e:
+        logging.error(f"Voice ad error: {e}")
+        await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
+
 # ─── ЗАГЛУШКИ ДЛЯ НЕОБРАБОТАННЫХ СООБЩЕНИЙ ──────────────────
 
 @dp.message(F.text)
@@ -1251,6 +1566,15 @@ async def fallback_photo(message: Message, state: FSMContext):
     if current is None:
         await message.answer(
             "📷 Хочешь создать карточку из этого фото?\n\nНажми '📦 Создать карточку' в меню:",
+            reply_markup=kb_main()
+        )
+
+@dp.message(F.voice | F.audio)
+async def fallback_voice(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is None:
+        await message.answer(
+            "🎙 Хочешь описать товар голосом?\n\nНажми '📦 Создать карточку' → выбери платформу → и отправь голосовое!",
             reply_markup=kb_main()
         )
 
