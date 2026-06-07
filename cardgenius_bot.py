@@ -83,7 +83,13 @@ class AdStates(StatesGroup):
 
 class InfographicStates(StatesGroup):
     choose_platform  = State()
+    choose_mode      = State()
     waiting_photo    = State()
+    manual_name      = State()
+    manual_price     = State()
+    manual_benefits  = State()
+    manual_tag       = State()
+    manual_photo     = State()
 
 # ─── БАЗА ДАННЫХ ─────────────────────────────────────────────
 DB = "/root/cardgenius.db"
@@ -362,6 +368,13 @@ def kb_infographic_platform():
         [InlineKeyboardButton(text="🟣 Wildberries", callback_data="infographic_wb"),
          InlineKeyboardButton(text="🔵 Ozon", callback_data="infographic_ozon")],
         [InlineKeyboardButton(text="🟡 Авито", callback_data="infographic_avito")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+    ])
+
+def kb_infographic_mode():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Авто — ИИ сам всё придумает", callback_data="infmode_auto")],
+        [InlineKeyboardButton(text="✏️ Вручную — я укажу текст сам", callback_data="infmode_manual")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
     ])
 
@@ -1308,6 +1321,7 @@ async def get_infographic_data(image_url: str, platform: str) -> dict:
     prompt = (
         "Ты помощник по созданию карточек товаров. На фото изображён товар. "
         "Определи тип товара и его назначение (не упоминай бренды). "
+        "Также определи в какой части фото расположен основной объект товара. "
         "Верни ТОЛЬКО JSON без markdown, без пояснений.\n"
         "Платформа: " + platform_label + "\n"
         'Формат JSON строго:\n'
@@ -1315,7 +1329,8 @@ async def get_infographic_data(image_url: str, platform: str) -> dict:
         '  "name": "краткое название товара до 40 символов",\n'
         '  "price": "примерная цена с рублевым знаком или пустая строка",\n'
         '  "benefits": ["выгода 1 до 28 символов", "выгода 2", "выгода 3", "выгода 4"],\n'
-        '  "tag": "короткий слоган до 25 символов"\n'
+        '  "tag": "короткий слоган до 25 символов",\n'
+        '  "product_side": "left или right или center — где находится основной товар на фото"\n'
         '}'
     )
     import base64, httpx, anthropic, json, re
@@ -1358,80 +1373,108 @@ def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
     ac  = style["accent"]
     ac2 = style["accent2"]
 
+    # Определяем с какой стороны товар — панель ставим напротив
+    product_side = data.get("product_side", "right").lower()
+    if product_side == "left":
+        panel_on_right = True   # товар слева — панель справа
+    elif product_side == "right":
+        panel_on_right = False  # товар справа — панель слева
+    else:
+        panel_on_right = False  # центр — панель слева
+
     product = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
     w, h = product.size
     side = min(w, h)
-    left = (w - side) // 2
-    top  = (h - side) // 2
-    product = product.crop((left, top, left + side, top + side))
+    left_crop = (w - side) // 2
+    top_crop  = (h - side) // 2
+    product = product.crop((left_crop, top_crop, left_crop + side, top_crop + side))
     product = product.resize((SIZE, SIZE), Image.LANCZOS)
 
     canvas = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
     canvas.paste(product, (0, 0))
 
+    # Тёмный градиент снизу
     overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
     draw_ov = ImageDraw.Draw(overlay)
     for y in range(SIZE):
-        if y > SIZE // 3:
-            alpha = min(200, int((y - SIZE//3) / (SIZE * 0.67) * 200))
-            draw_ov.line([(0, y), (SIZE, y)], fill=(15, 15, 25, alpha))
+        if y > SIZE * 0.6:
+            alpha = min(210, int((y - SIZE * 0.6) / (SIZE * 0.4) * 210))
+            draw_ov.line([(0, y), (SIZE, y)], fill=(10, 10, 20, alpha))
     canvas = Image.alpha_composite(canvas, overlay)
 
-    left_panel = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-    draw_lp = ImageDraw.Draw(left_panel)
-    draw_lp.rectangle([(0, 0), (340, SIZE)], fill=(15, 15, 25, 200))
-    canvas = Image.alpha_composite(canvas, left_panel)
+    # Боковая панель — с нужной стороны
+    panel_w = 340
+    side_panel = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    draw_sp = ImageDraw.Draw(side_panel)
+    if panel_on_right:
+        px = SIZE - panel_w
+        draw_sp.rectangle([(px, 0), (SIZE, SIZE - 130)], fill=(10, 10, 20, 210))
+        # Акцентная вертикальная линия
+        draw_sp.rectangle([(px, 0), (px + 4, SIZE - 130)], fill=(*ac, 255))
+    else:
+        px = 0
+        draw_sp.rectangle([(0, 0), (panel_w, SIZE - 130)], fill=(10, 10, 20, 210))
+        # Акцентная вертикальная линия
+        draw_sp.rectangle([(panel_w - 4, 0), (panel_w, SIZE - 130)], fill=(*ac, 255))
+    canvas = Image.alpha_composite(canvas, side_panel)
 
     draw = ImageDraw.Draw(canvas)
 
-    fnt_big   = get_font(48, bold=True)
-    fnt_med   = get_font(26, bold=True)
-    fnt_small = get_font(21, bold=False)
-    fnt_label = get_font(18, bold=True)
+    fnt_big   = get_font(46, bold=True)
+    fnt_med   = get_font(24, bold=True)
+    fnt_small = get_font(20, bold=False)
+    fnt_label = get_font(16, bold=True)
 
-    draw.rectangle([(0, 0), (SIZE, 6)], fill=ac)
+    # Верхняя акцентная полоса
+    draw.rectangle([(0, 0), (SIZE, 5)], fill=ac)
 
+    # Текст панели
+    tx = px + 16 if panel_on_right else 16
+
+    # Название платформы
+    draw.text((tx, 18), style["label"].upper(), font=fnt_label, fill=ac2)
+
+    # Название товара
     name = data.get("name", "Товар")
-    draw.text((20, 20), style["label"].upper(), font=fnt_label, fill=ac2)
-    y_name = 52
-    for line in textwrap.wrap(name, 20)[:2]:
-        draw.text((20, y_name), line, font=fnt_med, fill="white")
-        y_name += 34
+    y_cur = 44
+    for line in textwrap.wrap(name, 18)[:2]:
+        draw.text((tx, y_cur), line, font=fnt_med, fill="white")
+        y_cur += 32
 
-    draw.rectangle([(20, y_name + 10), (40, y_name + 12)], fill=ac)
-    draw.rectangle([(44, y_name + 10), (200, y_name + 12)], fill=(80, 80, 80))
+    # Разделитель
+    draw.rectangle([(tx, y_cur + 8), (tx + 30, y_cur + 10)], fill=ac)
+    draw.rectangle([(tx + 34, y_cur + 8), (tx + panel_w - 20, y_cur + 10)], fill=(70, 70, 90))
+    y_cur += 26
 
+    # Преимущества
     benefits = data.get("benefits", [])[:4]
-    y_ben = y_name + 30
     for i, b in enumerate(benefits):
-        draw.rectangle([(20, y_ben), (48, y_ben + 28)], fill=ac)
-        draw.text((27, y_ben + 4), str(i+1), font=fnt_small, fill="white")
-        lines = textwrap.wrap(b[:35], 17)[:2]
+        # Номерной бейдж
+        draw.rectangle([(tx, y_cur), (tx + 26, y_cur + 26)], fill=ac)
+        draw.text((tx + 6, y_cur + 4), str(i+1), font=fnt_small, fill="white")
+        # Текст
+        lines = textwrap.wrap(b[:34], 16)[:2]
         for li, ln in enumerate(lines):
-            draw.text((56, y_ben + li * 22), ln, font=fnt_small, fill=(220, 220, 220))
-        y_ben += max(52, 22 * len(lines) + 16)
+            draw.text((tx + 34, y_cur + li * 21), ln, font=fnt_small, fill=(210, 210, 225))
+        y_cur += max(50, 21 * len(lines) + 14)
 
-    draw.rectangle([(0, SIZE - 130), (SIZE, SIZE)], fill=(15, 15, 25, 230))
-    draw.rectangle([(0, SIZE - 134), (SIZE, SIZE - 130)], fill=ac)
+    # Нижняя тёмная полоса на всю ширину
+    draw.rectangle([(0, SIZE - 128), (SIZE, SIZE)], fill=(10, 10, 20, 235))
+    draw.rectangle([(0, SIZE - 132), (SIZE, SIZE - 128)], fill=ac)
 
     price = data.get("price", "")
     tag   = data.get("tag", "")
     if price:
-        draw.text((30, SIZE - 115), price, font=fnt_big, fill="white")
+        draw.text((28, SIZE - 112), price, font=fnt_big, fill="white")
         if tag:
-            draw.text((30, SIZE - 55), tag, font=fnt_med, fill=ac2)
-    else:
-        if tag:
-            draw.text((30, SIZE - 100), tag, font=fnt_big, fill="white")
+            draw.text((28, SIZE - 52), tag, font=fnt_med, fill=ac2)
+    elif tag:
+        draw.text((28, SIZE - 100), tag, font=fnt_big, fill="white")
 
-    badge_w = 180
-    draw.rectangle([(SIZE - badge_w - 20, SIZE - 50), (SIZE - 20, SIZE - 14)], fill=ac)
-    draw.text((SIZE - badge_w - 6, SIZE - 46), style["label"], font=fnt_med, fill="white")
-
-    for i in range(3):
-        x = SIZE - 15 - i * 8
-        draw_lp2 = ImageDraw.Draw(canvas)
-        draw_lp2.rectangle([(x, 0), (x + 3, SIZE)], fill=(*ac, 30 + i * 20))
+    # Бейдж платформы справа внизу
+    badge_w = 175
+    draw.rectangle([(SIZE - badge_w - 16, SIZE - 48), (SIZE - 16, SIZE - 16)], fill=ac)
+    draw.text((SIZE - badge_w - 4, SIZE - 44), style["label"], font=fnt_med, fill="white")
 
     out = io.BytesIO()
     canvas.convert("RGB").save(out, format="JPEG", quality=93)
@@ -1439,13 +1482,15 @@ def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
     return out.read()
 
 
+
+# ─── ИНФОГРАФИКА ХЕНДЛЕРЫ ────────────────────────────────────
+
 @dp.callback_query(F.data == "make_infographic")
 async def make_infographic_start(call: CallbackQuery, state: FSMContext):
     if not is_pro(call.from_user.id):
         await call.message.answer(
             "🔒 Инфографика из фото доступна в тарифе Про.\n\n"
-            "Бот анализирует фото, определяет товар и накладывает продающие подписи "
-            "прямо на изображение — как в топе WB и Ozon.",
+            "Бот накладывает продающие подписи прямо на фото товара — как в топе WB и Ozon.",
             reply_markup=kb_upgrade_pro()
         )
         await call.answer()
@@ -1453,7 +1498,7 @@ async def make_infographic_start(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(InfographicStates.choose_platform)
     await call.message.answer(
-        "🖼 Инфографика из фото\n\nВыбери платформу — оформление подберём под неё:",
+        "🖼 Инфографика из фото\n\nВыбери платформу:",
         reply_markup=kb_infographic_platform()
     )
     await call.answer()
@@ -1462,17 +1507,26 @@ async def make_infographic_start(call: CallbackQuery, state: FSMContext):
 async def infographic_choose_platform(call: CallbackQuery, state: FSMContext):
     platform = call.data.replace("infographic_", "")
     await state.update_data(platform=platform)
-    await state.set_state(InfographicStates.waiting_photo)
+    await state.set_state(InfographicStates.choose_mode)
     label = PLATFORM_STYLES[platform]["label"]
     await call.message.answer(
-        "Платформа: " + label + "\n\n"
-        "📷 Отправь фото товара — наложу продающие подписи в стиле " + label + ".",
+        "Платформа: " + label + "\n\nКак заполним текст на инфографике?",
+        reply_markup=kb_infographic_mode()
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "infmode_auto", InfographicStates.choose_mode)
+async def infographic_mode_auto(call: CallbackQuery, state: FSMContext):
+    await state.update_data(mode="auto")
+    await state.set_state(InfographicStates.waiting_photo)
+    await call.message.answer(
+        "🤖 Авто режим\n\n📷 Отправь фото товара — ИИ сам определит название, преимущества и слоган.",
         reply_markup=kb_back()
     )
     await call.answer()
 
 @dp.message(InfographicStates.waiting_photo, F.photo)
-async def process_infographic_photo(message: Message, state: FSMContext):
+async def process_infographic_auto(message: Message, state: FSMContext):
     data = await state.get_data()
     platform = data.get("platform", "wb")
     user_id = message.from_user.id
@@ -1484,27 +1538,171 @@ async def process_infographic_photo(message: Message, state: FSMContext):
         file_bytes = await bot.download_file(file.file_path)
         img_bytes = file_bytes.read()
         product_data = await get_infographic_data(image_url, platform)
+        product_data.pop("price", None)
         result_bytes = await asyncio.to_thread(draw_infographic, img_bytes, product_data, platform)
         label = PLATFORM_STYLES[platform]["label"]
-        name_str  = product_data.get("name", "")
-        price_str = product_data.get("price", "")
-        price_line = ("💰 " + price_str + "\n") if price_str else ""
-        caption = (
-            "🖼 Инфографика для " + label + " готова!\n\n"
-            "📦 " + name_str + "\n"
-            + price_line +
-            "\nСохрани фото и загружай в карточку товара."
-        )
-        save_history(user_id, platform, "infographic", name_str)
+        caption = "🖼 Инфографика для " + label + " готова!\n\n📦 " + product_data.get("name", "") + "\n\nСохрани фото и загружай в карточку товара."
+        save_history(user_id, platform, "infographic", product_data.get("name", ""))
         photo_file = BufferedInputFile(result_bytes, filename="infographic.jpg")
         await message.answer_photo(photo_file, caption=caption, reply_markup=kb_main())
         await state.clear()
     except Exception as e:
-        logging.error("Infographic error: " + str(e))
-        await message.answer(
-            "❌ Ошибка создания инфографики. Попробуй ещё раз или отправь другое фото.",
-            reply_markup=kb_back()
+        logging.error("Infographic auto error: " + str(e))
+        await message.answer("❌ Ошибка. Попробуй ещё раз или отправь другое фото.", reply_markup=kb_back())
+
+@dp.callback_query(F.data == "infmode_manual", InfographicStates.choose_mode)
+async def infographic_mode_manual(call: CallbackQuery, state: FSMContext):
+    await state.update_data(mode="manual", manual_name="", manual_price="", manual_benefits=[], manual_tag="")
+    await state.set_state(InfographicStates.manual_name)
+    await call.message.answer(
+        "✏️ Шаг 1/4 — Название товара\n\nВведи название для инфографики (до 40 символов)\nили нажми кнопку — ИИ придумает сам.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Придумать за меня", callback_data="infai_name")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+    await call.answer()
+
+@dp.message(InfographicStates.manual_name, F.text)
+async def manual_name_text(message: Message, state: FSMContext):
+    await state.update_data(manual_name=message.text[:40])
+    await state.set_state(InfographicStates.manual_price)
+    await message.answer(
+        "💰 Шаг 2/4 — Цена\n\nВведи цену (например: 1 990 ₽)\nили пропусти — цена не будет на инфографике.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ Не указывать цену", callback_data="infskip_price")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+
+@dp.callback_query(F.data == "infai_name", InfographicStates.manual_name)
+async def manual_name_ai(call: CallbackQuery, state: FSMContext):
+    await state.update_data(manual_name="__ai__")
+    await state.set_state(InfographicStates.manual_price)
+    await call.message.answer(
+        "💰 Шаг 2/4 — Цена\n\nВведи цену (например: 1 990 ₽)\nили пропусти — цена не будет на инфографике.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ Не указывать цену", callback_data="infskip_price")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+    await call.answer()
+
+@dp.message(InfographicStates.manual_price, F.text)
+async def manual_price_text(message: Message, state: FSMContext):
+    await state.update_data(manual_price=message.text[:20])
+    await state.set_state(InfographicStates.manual_benefits)
+    await message.answer(
+        "✅ Шаг 3/4 — Преимущества\n\nВведи 4 преимущества — каждое с новой строки.\nНапример:\nВодонепроницаемый корпус\nРаботает от батарейки\nТихий мотор\nЧехол в комплекте\n\nИли нажми — ИИ придумает сам.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Придумать за меня", callback_data="infai_benefits")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+
+@dp.callback_query(F.data == "infskip_price", InfographicStates.manual_price)
+async def manual_price_skip(call: CallbackQuery, state: FSMContext):
+    await state.update_data(manual_price="")
+    await state.set_state(InfographicStates.manual_benefits)
+    await call.message.answer(
+        "✅ Шаг 3/4 — Преимущества\n\nВведи 4 преимущества — каждое с новой строки.\nНапример:\nВодонепроницаемый корпус\nРаботает от батарейки\nТихий мотор\nЧехол в комплекте\n\nИли нажми — ИИ придумает сам.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Придумать за меня", callback_data="infai_benefits")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+    await call.answer()
+
+@dp.message(InfographicStates.manual_benefits, F.text)
+async def manual_benefits_text(message: Message, state: FSMContext):
+    lines = [l.strip() for l in message.text.split("\n") if l.strip()][:4]
+    await state.update_data(manual_benefits=lines)
+    await state.set_state(InfographicStates.manual_tag)
+    await message.answer(
+        "🏷 Шаг 4/4 — Слоган\n\nВведи короткий слоган (до 25 символов)\nнапример: «Уход без усилий»\n\nИли выбери:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Придумать за меня", callback_data="infai_tag")],
+            [InlineKeyboardButton(text="⏭ Не указывать", callback_data="infskip_tag")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+
+@dp.callback_query(F.data == "infai_benefits", InfographicStates.manual_benefits)
+async def manual_benefits_ai(call: CallbackQuery, state: FSMContext):
+    await state.update_data(manual_benefits=["__ai__"])
+    await state.set_state(InfographicStates.manual_tag)
+    await call.message.answer(
+        "🏷 Шаг 4/4 — Слоган\n\nВведи короткий слоган (до 25 символов)\nнапример: «Уход без усилий»\n\nИли выбери:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Придумать за меня", callback_data="infai_tag")],
+            [InlineKeyboardButton(text="⏭ Не указывать", callback_data="infskip_tag")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        ])
+    )
+    await call.answer()
+
+@dp.message(InfographicStates.manual_tag, F.text)
+async def manual_tag_text(message: Message, state: FSMContext):
+    await state.update_data(manual_tag=message.text[:25])
+    await state.set_state(InfographicStates.manual_photo)
+    await message.answer("📷 Отлично! Теперь отправь фото товара — наложу всё на изображение.", reply_markup=kb_back())
+
+@dp.callback_query(F.data == "infai_tag", InfographicStates.manual_tag)
+async def manual_tag_ai(call: CallbackQuery, state: FSMContext):
+    await state.update_data(manual_tag="__ai__")
+    await state.set_state(InfographicStates.manual_photo)
+    await call.message.answer("📷 Отлично! Теперь отправь фото товара — наложу всё на изображение.", reply_markup=kb_back())
+    await call.answer()
+
+@dp.callback_query(F.data == "infskip_tag", InfographicStates.manual_tag)
+async def manual_tag_skip(call: CallbackQuery, state: FSMContext):
+    await state.update_data(manual_tag="")
+    await state.set_state(InfographicStates.manual_photo)
+    await call.message.answer("📷 Отлично! Теперь отправь фото товара — наложу всё на изображение.", reply_markup=kb_back())
+    await call.answer()
+
+@dp.message(InfographicStates.manual_photo, F.photo)
+async def process_infographic_manual(message: Message, state: FSMContext):
+    data = await state.get_data()
+    platform = data.get("platform", "wb")
+    user_id = message.from_user.id
+    await message.answer("⏳ Создаю инфографику...")
+    try:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        image_url = "https://api.telegram.org/file/bot" + BOT_TOKEN + "/" + file.file_path
+        file_bytes = await bot.download_file(file.file_path)
+        img_bytes = file_bytes.read()
+        need_ai = (
+            data.get("manual_name") == "__ai__" or
+            data.get("manual_benefits") == ["__ai__"] or
+            data.get("manual_tag") == "__ai__"
         )
+        ai_data = await get_infographic_data(image_url, platform) if need_ai else {}
+        name = data.get("manual_name") if data.get("manual_name") != "__ai__" else ai_data.get("name", "")
+        price = data.get("manual_price", "")
+        benefits = data.get("manual_benefits") if data.get("manual_benefits") != ["__ai__"] else ai_data.get("benefits", [])
+        tag = data.get("manual_tag") if data.get("manual_tag") not in ("__ai__",) else ai_data.get("tag", "")
+        if data.get("manual_tag") == "":
+            tag = ""
+        product_data = {
+            "name": name,
+            "price": price,
+            "benefits": benefits,
+            "tag": tag,
+            "product_side": ai_data.get("product_side", "right"),
+        }
+        result_bytes = await asyncio.to_thread(draw_infographic, img_bytes, product_data, platform)
+        label = PLATFORM_STYLES[platform]["label"]
+        price_line = "💰 " + price + "\n" if price else ""
+        caption = "🖼 Инфографика для " + label + " готова!\n\n📦 " + name + "\n" + price_line + "\nСохрани фото и загружай в карточку товара."
+        save_history(user_id, platform, "infographic", name)
+        photo_file = BufferedInputFile(result_bytes, filename="infographic.jpg")
+        await message.answer_photo(photo_file, caption=caption, reply_markup=kb_main())
+        await state.clear()
+    except Exception as e:
+        logging.error("Infographic manual error: " + str(e))
+        await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
 
 
 # ─── ГОЛОСОВЫЕ СООБЩЕНИЯ ─────────────────────────────────────
