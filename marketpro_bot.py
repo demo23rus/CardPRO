@@ -114,6 +114,10 @@ class DalleStates(StatesGroup):
     choose_type  = State()
     waiting_desc = State()
 
+class DallePhotoStates(StatesGroup):
+    choose_type  = State()
+    waiting_photo = State()
+
 class BroadcastStates(StatesGroup):
     waiting = State()
 
@@ -391,6 +395,7 @@ def kb_dalle_types():
         [InlineKeyboardButton(text="📋 Как использовать", callback_data="dalle_howto"),
          InlineKeyboardButton(text="⚔️ Vs конкурента", callback_data="dalle_compare")],
         [InlineKeyboardButton(text="📦 Комплектация", callback_data="dalle_kit")],
+        [InlineKeyboardButton(text="📸 Фото → Инфографика (2 кредита)", callback_data="dalle_from_photo")],
         [InlineKeyboardButton(text="📚 Набор слайдов (3-5 карточек)", callback_data="dalle_slideset")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_menu")],
     ])
@@ -447,40 +452,51 @@ PLATFORM_RULES = {
 - SEO-ключи: 20 штук через запятую
 - Характеристики: бренд, категория, страна, состав/материал
 - Запрещено: ссылки, слова "лучший/№1"
-Формат:
+- Никакой markdown разметки! Никаких ##, **, *, ---, только чистый текст
+Формат ответа строго:
 📦 НАЗВАНИЕ:
-[название]
+[название без кавычек и спецсимволов]
+
 📝 ОПИСАНИЕ:
-[описание]
+[чистый текст описания, абзацы через пустую строку, без markdown]
+
 🔑 SEO-КЛЮЧИ:
-[ключи]
+[ключи через запятую]
+
 📋 ХАРАКТЕРИСТИКИ:
-[список]""",
+[каждая характеристика с новой строки без маркеров markdown]""",
     "ozon": """ПЛАТФОРМА: Ozon
 - Название: 50–200 символов, Тип+Бренд+характеристики
-- Описание: 500–4000 символов, rich-текст с подзаголовками
+- Описание: 500–4000 символов, абзацы с подзаголовками в виде обычного текста
 - SEO-ключи: 20 штук через запятую
 - Характеристики: бренд, страна, гарантия, комплектация
-Формат:
+- Никакой markdown разметки! Никаких ##, **, *, ---, только чистый текст
+Формат ответа строго:
 📦 НАЗВАНИЕ:
-[название]
+[название без кавычек]
+
 📝 ОПИСАНИЕ:
-[описание]
+[чистый текст, подзаголовки просто заглавными буквами или с двоеточием, абзацы через пустую строку]
+
 🔑 SEO-КЛЮЧИ:
-[ключи]
+[ключи через запятую]
+
 📋 ХАРАКТЕРИСТИКИ:
-[список]""",
+[каждая с новой строки, без маркеров]""",
     "avito": """ПЛАТФОРМА: Авито
 - Заголовок: до 50 символов, конкретный
-- Описание: 300–2000 символов, боль → преимущества → призыв
+- Описание: 300–2000 символов, боль → преимущества → призыв к действию
 - Ключи: 10–15 фраз которые ищут на Авито
-Формат:
+- Никакой markdown разметки! Никаких ##, **, *, ---, только чистый текст
+Формат ответа строго:
 📦 ЗАГОЛОВОК:
-[заголовок]
+[заголовок без кавычек]
+
 📝 ОПИСАНИЕ:
-[описание]
+[чистый живой текст, абзацы через пустую строку]
+
 🔑 КЛЮЧЕВЫЕ СЛОВА:
-[ключи]""",
+[ключи через запятую]""",
 }
 
 PLATFORM_NAMES = {"wb": "Wildberries", "ozon": "Ozon", "avito": "Авито"}
@@ -1659,6 +1675,138 @@ async def broadcast_send(message: Message, state: FSMContext):
             await asyncio.sleep(0.05)
         except: pass
     await message.answer(f"✅ Рассылка отправлена {ok}/{len(users)} пользователям")
+
+
+
+# ─── ФОТО → DALL-E ИНФОГРАФИКА ───────────────────────────────
+
+@dp.callback_query(F.data == "dalle_from_photo")
+async def dalle_from_photo_start(call: CallbackQuery, state: FSMContext):
+    uid = call.from_user.id
+    if not is_paid(uid):
+        await call.message.answer("🔒 Фото → Инфографика доступна с тарифа Старт.", reply_markup=kb_upgrade_start())
+        await call.answer(); return
+    dalle = get_dalle(uid)
+    if dalle < 2:
+        await call.message.answer(
+            f"💎 Для генерации из фото нужно 2 DALL-E кредита.\n\nТвой баланс: {dalle} кредитов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="10 ген — 149 ₽", callback_data="pay_dalle_10")],
+                [InlineKeyboardButton(text="30 ген — 349 ₽", callback_data="pay_dalle_30")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
+            ])
+        )
+        await call.answer(); return
+    await state.clear()
+    await state.set_state(DallePhotoStates.choose_type)
+    await call.message.answer(
+        "📸 Фото → Инфографика DALL-E\n\n"
+        "Загружаешь фото товара → я определяю что это → DALL-E создаёт профессиональную карточку.\n\n"
+        f"💎 Стоимость: 2 кредита (баланс: {dalle})\n\n"
+        "Выбери тип карточки:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏷 Обложка товара", callback_data="dphoto_cover"),
+             InlineKeyboardButton(text="✅ Преимущества", callback_data="dphoto_benefits")],
+            [InlineKeyboardButton(text="🔄 До / После", callback_data="dphoto_before_after"),
+             InlineKeyboardButton(text="💡 Проблема→Решение", callback_data="dphoto_problem")],
+            [InlineKeyboardButton(text="📋 Как использовать", callback_data="dphoto_howto"),
+             InlineKeyboardButton(text="📦 Комплектация", callback_data="dphoto_kit")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="sec_dalle")],
+        ])
+    )
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("dphoto_"), DallePhotoStates.choose_type)
+async def dalle_photo_choose_type(call: CallbackQuery, state: FSMContext):
+    dtype = call.data.replace("dphoto_", "")
+    await state.update_data(dalle_type=dtype)
+    await state.set_state(DallePhotoStates.waiting_photo)
+    type_name = DALLE_TYPES.get(dtype, ("Карточка", ""))[0]
+    await call.message.answer(
+        f"Тип: {type_name}\n\n"
+        "📷 Отправь фото товара — определю что это и создам профессиональную карточку.",
+        reply_markup=kb_back()
+    )
+    await call.answer()
+
+@dp.message(DallePhotoStates.waiting_photo, F.photo)
+async def dalle_from_photo_generate(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    data = await state.get_data()
+    dtype = data.get("dalle_type", "cover")
+
+    if get_dalle(uid) < 2:
+        await message.answer("💎 Недостаточно кредитов. Нужно 2.", reply_markup=kb_tariffs())
+        return
+
+    await message.answer("⏳ Анализирую фото... потом генерирую карточку. 20-40 секунд.")
+
+    try:
+        # Шаг 1 — Claude анализирует фото
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+
+        system = (
+            "Ты эксперт по маркетплейсам. Анализируй фото товара. "
+            "Определи тип товара (не называй бренды). "
+            "Верни ТОЛЬКО JSON без markdown:\n"
+            '{"name":"название до 40 символов","benefits":["выгода1","выгода2","выгода3","выгода4"],"material":"материал или состав","use":"для кого и зачем","features":"ключевые характеристики через запятую"}'
+        )
+        raw = await claude_vision(system, "Определи товар и заполни JSON.", image_url)
+        raw = re.sub(r"```json|```", "", raw).strip()
+        product_data = json.loads(raw)
+
+        # Формируем описание для DALL-E
+        desc = (
+            f"{product_data.get('name', 'товар')}. "
+            f"Материал: {product_data.get('material', '')}. "
+            f"Применение: {product_data.get('use', '')}. "
+            f"Характеристики: {product_data.get('features', '')}. "
+            f"Преимущества: {', '.join(product_data.get('benefits', []))}"
+        )
+
+        # Шаг 2 — списываем 2 кредита и генерируем через DALL-E
+        use_dalle(uid)
+        use_dalle(uid)
+
+        img_url = await gen_dalle(dtype, desc)
+        type_name = DALLE_TYPES.get(dtype, ("Карточка", ""))[0]
+        dalle_left = get_dalle(uid)
+
+        async with httpx.AsyncClient() as hc:
+            r = await hc.get(img_url)
+            img_bytes = r.content
+
+        save_history(uid, "dalle", f"Фото→{type_name}: {product_data.get('name','')}")
+        photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
+        await message.answer_photo(
+            photo_file,
+            caption=(
+                f"🖼 {type_name} готова!\n\n"
+                f"📦 {product_data.get('name', '')}\n\n"
+                f"💎 Остаток кредитов: {dalle_left}\n\n"
+                "Сохрани и загружай в карточку товара!"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Другой тип (2 кредита)", callback_data="dalle_from_photo")],
+                [InlineKeyboardButton(text="📸 Другое фото", callback_data="dalle_from_photo")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
+            ])
+        )
+        await state.clear()
+
+    except json.JSONDecodeError:
+        # Если Claude вернул не JSON — используем текстовое описание
+        add_dalle(uid, 1)  # Возвращаем 1 кредит (1 уже потрачен на Claude)
+        await message.answer(
+            "⚠️ Не удалось точно распознать товар. Попробуй описать его текстом через обычную DALL-E генерацию.",
+            reply_markup=kb_back()
+        )
+    except Exception as e:
+        logging.error(f"DALL-E from photo error: {e}")
+        add_dalle(uid, 2)  # Возвращаем оба кредита при ошибке
+        await message.answer("❌ Ошибка генерации. Оба кредита возвращены.", reply_markup=kb_back())
 
 
 # ─── РЕФЕРАЛКА ───────────────────────────────────────────────
