@@ -1273,8 +1273,29 @@ async def check_payments_loop():
 
 # ─── ИНФОГРАФИКА ─────────────────────────────────────────────
 
-FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-FONT_REG  = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+# Шрифты — пробуем системные, падаем на встроенный Pillow
+def get_font(size, bold=False):
+    candidates_bold = [
+        "/root/fonts/Roboto-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    ]
+    candidates_reg = [
+        "/root/fonts/Roboto-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    import os
+    candidates = candidates_bold if bold else candidates_reg
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+    return ImageFont.load_default()
 
 PLATFORM_STYLES = {
     "wb":    {"header": (103, 0, 255),  "panel": (240, 235, 255), "label": "Wildberries"},
@@ -1340,30 +1361,30 @@ def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
     canvas = product.copy()
     draw = ImageDraw.Draw(canvas, "RGBA")
 
-    fnt_big   = ImageFont.truetype(FONT_BOLD, 44)
-    fnt_med   = ImageFont.truetype(FONT_BOLD, 30)
-    fnt_small = ImageFont.truetype(FONT_REG, 25)
-    fnt_tag   = ImageFont.truetype(FONT_BOLD, 28)
+    fnt_big   = get_font(40, bold=True)
+    fnt_med   = get_font(26, bold=True)
+    fnt_small = get_font(21, bold=False)
+    fnt_tag   = get_font(26, bold=True)
 
     hc = style["header"]
     pc = style["panel"]
 
     # Верхняя плашка
     draw.rectangle([(0, 0), (SIZE, 88)], fill=(hc[0], hc[1], hc[2], 220))
-    name = data.get("name", "Товар")[:38]
-    draw.text((18, 20), name, font=fnt_big, fill="white")
+    name = data.get("name", "Товар")[:45]
+    draw.text((18, 22), name, font=fnt_big, fill="white")
 
-    # Правая панель
-    px = SIZE - 310
+    # Правая панель — шире
+    px = SIZE - 340
     draw.rectangle([(px, 90), (SIZE, SIZE - 82)], fill=(pc[0], pc[1], pc[2], 210))
     draw.text((px + 12, 104), "Преимущества:", font=fnt_med, fill=(hc[0], hc[1], hc[2]))
     benefits = data.get("benefits", [])[:4]
     for i, b in enumerate(benefits):
-        y = 160 + i * 70
-        draw.ellipse([(px + 10, y), (px + 34, y + 24)], fill=(hc[0], hc[1], hc[2]))
-        draw.text((px + 14, y + 2), "v", font=fnt_small, fill="white")
-        for li, ln in enumerate(textwrap.wrap(b[:28], 15)[:2]):
-            draw.text((px + 42, y + li * 26), ln, font=fnt_small, fill=(20, 20, 20))
+        y = 155 + i * 72
+        draw.ellipse([(px + 10, y), (px + 30, y + 20)], fill=(hc[0], hc[1], hc[2]))
+        draw.text((px + 13, y + 2), "v", font=fnt_small, fill="white")
+        for li, ln in enumerate(textwrap.wrap(b[:32], 18)[:2]):
+            draw.text((px + 38, y + li * 23), ln, font=fnt_small, fill=(20, 20, 20))
 
     # Нижняя плашка
     draw.rectangle([(0, SIZE - 82), (SIZE, SIZE)], fill=(hc[0], hc[1], hc[2], 220))
