@@ -55,7 +55,7 @@ dp     = Dispatcher(storage=MemoryStorage())
 client = AsyncOpenAI(api_key=OPENAI_KEY)
 logging.basicConfig(level=logging.INFO)
 
-ANTHROPIC_KEY = "sk-ant-api03-23Ex-c3q51Ue6WMOlzOn_b4MetM5YxAydtyGqtV_tz7jZY1W_VZg9JqSlKuhw_HAgf4IXLNBZlQ2XZ60RbiJCg-crSF9wAA"
+ANTHROPIC_KEY = "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"
 
 # ─── FSM СОСТОЯНИЯ ───────────────────────────────────────────
 class CardStates(StatesGroup):
