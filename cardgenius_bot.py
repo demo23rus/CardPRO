@@ -55,6 +55,8 @@ dp     = Dispatcher(storage=MemoryStorage())
 client = AsyncOpenAI(api_key=OPENAI_KEY)
 logging.basicConfig(level=logging.INFO)
 
+ANTHROPIC_KEY = _env.get("ANTHROPIC_KEY", "")
+
 # ─── FSM СОСТОЯНИЯ ───────────────────────────────────────────
 class CardStates(StatesGroup):
     choose_platform  = State()
@@ -437,23 +439,32 @@ async def gpt(system, user_text, model="gpt-4o", max_tokens=1500):
     return resp.choices[0].message.content.strip()
 
 async def gpt_vision(system, user_text, image_url, max_tokens=1500):
-    import base64, httpx
+    import base64, httpx, anthropic
     async with httpx.AsyncClient() as hc:
         r = await hc.get(image_url)
         img_bytes = r.content
     b64 = base64.b64encode(img_bytes).decode()
-    resp = await client.chat.completions.create(
-        model="gpt-4o",
+    aclient = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    resp = aclient.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=max_tokens,
+        system=system,
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": system + "\n\n" + user_text}
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64
+                    }
+                },
+                {"type": "text", "text": user_text}
             ]
-        }],
-        max_tokens=max_tokens
+        }]
     )
-    return resp.choices[0].message.content.strip()
+    return resp.content[0].text.strip()
 
 async def generate_card_from_text(platform, description):
     rules = PLATFORM_RULES.get(platform, PLATFORM_RULES["wb"])
@@ -1286,24 +1297,31 @@ async def get_infographic_data(image_url: str, platform: str) -> dict:
         '  "tag": "короткий слоган до 25 символов"\n'
         '}'
     )
-    import base64, httpx
+    import base64, httpx, anthropic, json, re
     async with httpx.AsyncClient() as hc:
         r = await hc.get(image_url)
         img_bytes = r.content
     b64 = base64.b64encode(img_bytes).decode()
-    resp = await client.chat.completions.create(
-        model="gpt-4o",
+    aclient = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    resp = aclient.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=400,
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64
+                    }
+                },
                 {"type": "text", "text": prompt}
             ]
-        }],
-        max_tokens=400
+        }]
     )
-    import json, re
-    raw = resp.choices[0].message.content.strip()
+    raw = resp.content[0].text.strip()
     raw = re.sub(r"```json|```", "", raw).strip()
     return json.loads(raw)
 
