@@ -1346,11 +1346,19 @@ async def get_infographic_data(image_url: str, platform: str) -> dict:
     raw = re.sub(r"```json|```", "", raw).strip()
     return json.loads(raw)
 
-def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
-    style = PLATFORM_STYLES[platform]
-    SIZE = 1000
+SIZE = 1000
 
-    product = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
+    STYLES = {
+        "wb":    {"accent": (138, 43, 226), "accent2": (180, 100, 255), "label": "Wildberries"},
+        "ozon":  {"accent": (0, 100, 255),  "accent2": (60, 150, 255),  "label": "Ozon"},
+        "avito": {"accent": (0, 168, 132),  "accent2": (0, 210, 165),   "label": "Авито"},
+    }
+    style = STYLES[platform]
+    ac  = style["accent"]
+    ac2 = style["accent2"]
+
+    product = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
     w, h = product.size
     side = min(w, h)
     left = (w - side) // 2
@@ -1358,53 +1366,78 @@ def draw_infographic(img_bytes: bytes, data: dict, platform: str) -> bytes:
     product = product.crop((left, top, left + side, top + side))
     product = product.resize((SIZE, SIZE), Image.LANCZOS)
 
-    canvas = product.copy()
-    draw = ImageDraw.Draw(canvas, "RGBA")
+    canvas = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    canvas.paste(product, (0, 0))
 
-    fnt_big   = get_font(40, bold=True)
+    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    draw_ov = ImageDraw.Draw(overlay)
+    for y in range(SIZE):
+        if y > SIZE // 3:
+            alpha = min(200, int((y - SIZE//3) / (SIZE * 0.67) * 200))
+            draw_ov.line([(0, y), (SIZE, y)], fill=(15, 15, 25, alpha))
+    canvas = Image.alpha_composite(canvas, overlay)
+
+    left_panel = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    draw_lp = ImageDraw.Draw(left_panel)
+    draw_lp.rectangle([(0, 0), (340, SIZE)], fill=(15, 15, 25, 200))
+    canvas = Image.alpha_composite(canvas, left_panel)
+
+    draw = ImageDraw.Draw(canvas)
+
+    fnt_big   = get_font(48, bold=True)
     fnt_med   = get_font(26, bold=True)
     fnt_small = get_font(21, bold=False)
-    fnt_tag   = get_font(26, bold=True)
+    fnt_label = get_font(18, bold=True)
 
-    hc = style["header"]
-    pc = style["panel"]
+    draw.rectangle([(0, 0), (SIZE, 6)], fill=ac)
 
-    # Верхняя плашка
-    draw.rectangle([(0, 0), (SIZE, 88)], fill=(hc[0], hc[1], hc[2], 220))
-    name = data.get("name", "Товар")[:45]
-    draw.text((18, 22), name, font=fnt_big, fill="white")
+    name = data.get("name", "Товар")
+    draw.text((20, 20), style["label"].upper(), font=fnt_label, fill=ac2)
+    y_name = 52
+    for line in textwrap.wrap(name, 20)[:2]:
+        draw.text((20, y_name), line, font=fnt_med, fill="white")
+        y_name += 34
 
-    # Правая панель — шире
-    px = SIZE - 340
-    draw.rectangle([(px, 90), (SIZE, SIZE - 82)], fill=(pc[0], pc[1], pc[2], 210))
-    draw.text((px + 12, 104), "Преимущества:", font=fnt_med, fill=(hc[0], hc[1], hc[2]))
+    draw.rectangle([(20, y_name + 10), (40, y_name + 12)], fill=ac)
+    draw.rectangle([(44, y_name + 10), (200, y_name + 12)], fill=(80, 80, 80))
+
     benefits = data.get("benefits", [])[:4]
+    y_ben = y_name + 30
     for i, b in enumerate(benefits):
-        y = 155 + i * 72
-        draw.ellipse([(px + 10, y), (px + 30, y + 20)], fill=(hc[0], hc[1], hc[2]))
-        draw.text((px + 13, y + 2), "v", font=fnt_small, fill="white")
-        for li, ln in enumerate(textwrap.wrap(b[:32], 18)[:2]):
-            draw.text((px + 38, y + li * 23), ln, font=fnt_small, fill=(20, 20, 20))
+        draw.rectangle([(20, y_ben), (48, y_ben + 28)], fill=ac)
+        draw.text((27, y_ben + 4), str(i+1), font=fnt_small, fill="white")
+        lines = textwrap.wrap(b[:35], 17)[:2]
+        for li, ln in enumerate(lines):
+            draw.text((56, y_ben + li * 22), ln, font=fnt_small, fill=(220, 220, 220))
+        y_ben += max(52, 22 * len(lines) + 16)
 
-    # Нижняя плашка
-    draw.rectangle([(0, SIZE - 82), (SIZE, SIZE)], fill=(hc[0], hc[1], hc[2], 220))
+    draw.rectangle([(0, SIZE - 130), (SIZE, SIZE)], fill=(15, 15, 25, 230))
+    draw.rectangle([(0, SIZE - 134), (SIZE, SIZE - 130)], fill=ac)
+
     price = data.get("price", "")
-    tag   = data.get("tag", style["label"])
+    tag   = data.get("tag", "")
     if price:
-        draw.text((18, SIZE - 65), price, font=fnt_big, fill="white")
-        draw.text((220, SIZE - 58), tag, font=fnt_tag, fill=(210, 200, 255))
+        draw.text((30, SIZE - 115), price, font=fnt_big, fill="white")
+        if tag:
+            draw.text((30, SIZE - 55), tag, font=fnt_med, fill=ac2)
     else:
-        draw.text((18, SIZE - 65), tag, font=fnt_big, fill="white")
+        if tag:
+            draw.text((30, SIZE - 100), tag, font=fnt_big, fill="white")
 
-    # Бейдж платформы
-    by = SIZE - 82 - 46
-    draw.rectangle([(0, by), (185, by + 42)], fill=(hc[0], hc[1], hc[2], 200))
-    draw.text((10, by + 7), style["label"], font=fnt_med, fill="white")
+    badge_w = 180
+    draw.rectangle([(SIZE - badge_w - 20, SIZE - 50), (SIZE - 20, SIZE - 14)], fill=ac)
+    draw.text((SIZE - badge_w - 6, SIZE - 46), style["label"], font=fnt_med, fill="white")
+
+    for i in range(3):
+        x = SIZE - 15 - i * 8
+        draw_lp2 = ImageDraw.Draw(canvas)
+        draw_lp2.rectangle([(x, 0), (x + 3, SIZE)], fill=(*ac, 30 + i * 20))
 
     out = io.BytesIO()
-    canvas.save(out, format="JPEG", quality=92)
+    canvas.convert("RGB").save(out, format="JPEG", quality=93)
     out.seek(0)
     return out.read()
+
 
 @dp.callback_query(F.data == "make_infographic")
 async def make_infographic_start(call: CallbackQuery, state: FSMContext):
