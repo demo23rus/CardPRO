@@ -625,7 +625,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
     await message.answer(
         f"Привет, {name}! 👋\n\n"
-        f"Я CardGenius — бот для создания продающих карточек товаров.\n\n"
+        f"Я КарточкаПро — бот для создания продающих карточек товаров.\n\n"
         f"Что умею:\n"
         f"📦 Карточки для WB, Ozon и Авито — из фото или текста\n"
         f"🧮 Юнит-экономика — считаю прибыль с учётом комиссий\n"
@@ -644,7 +644,7 @@ async def cmd_stats(message: Message):
         return
     total, starts, pros, reqs = get_stats()
     await message.answer(
-        f"📊 Статистика CardGenius\n\n"
+        f"📊 Статистика КарточкаПро\n\n"
         f"👤 Всего пользователей: {total}\n"
         f"🟢 Тариф Старт: {starts}\n"
         f"🔥 Тариф Про: {pros}\n"
@@ -1118,7 +1118,7 @@ async def tariffs(call: CallbackQuery):
         status = f"Использовано бесплатных: {count} из {FREE_LIMIT}"
 
     await call.message.answer(
-        f"💎 Тарифы CardGenius\n\n"
+        f"💎 Тарифы КарточкаПро\n\n"
         f"{status}\n\n"
         f"🆓 Бесплатно:\n"
         f"• {FREE_LIMIT} запросов на старте\n"
@@ -1165,7 +1165,7 @@ async def pay_start(call: CallbackQuery):
     user_id = call.from_user.id
     await call.answer()
     try:
-        payment = await create_payment(user_id, 190, "card_start", "Тариф Старт CardGenius 30 дней")
+        payment = await create_payment(user_id, 190, "card_start", "Тариф Старт КарточкаПро 30 дней")
         save_pending(payment.id, user_id, "card_start")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить 190 ₽", url=payment.confirmation.confirmation_url)],
@@ -1186,7 +1186,7 @@ async def pay_pro(call: CallbackQuery):
     user_id = call.from_user.id
     await call.answer()
     try:
-        payment = await create_payment(user_id, 390, "card_pro", "Тариф Про CardGenius 30 дней")
+        payment = await create_payment(user_id, 390, "card_pro", "Тариф Про КарточкаПро 30 дней")
         save_pending(payment.id, user_id, "card_pro")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить 390 ₽", url=payment.confirmation.confirmation_url)],
@@ -1259,7 +1259,7 @@ async def fallback_photo(message: Message, state: FSMContext):
 async def main():
     init_db()
     asyncio.create_task(check_payments_loop())
-    logging.info("CardGenius запущен!")
+    logging.info("КарточкаПро запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
