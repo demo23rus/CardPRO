@@ -692,72 +692,96 @@ async def gen_dalle(dalle_type, product_desc, platform="wb"):
 
     prompts = {
         "cover": (
-            f"Professional product card for Russian marketplace. {colors}. "
-            f"Clean white background. Product: {product_desc}. "
-            f"Large product title at top in bold Russian text. "
-            f"3-4 key characteristics listed below with checkmarks. "
-            f"Price badge in corner. Modern flat design. No real logos. "
-            f"Size 900x1200px vertical format. High quality commercial photography style."
+            f"Professional Wildberries/Ozon marketplace product card photo. {colors}. "
+            f"The product is: {product_desc}. "
+            f"Show the actual product prominently in center with beautiful studio lighting. "
+            f"Elegant dark background with subtle botanical/decorative elements. "
+            f"Large bold Russian text at bottom: product name. "
+            f"3 key benefits listed below with golden checkmark circles. "
+            f"Small volume/size badge in top right corner. "
+            f"High-end commercial photography style. Vertical format 1024x1536px. "
+            f"Text must be in Russian language and clearly readable."
         ),
         "benefits": (
-            f"Benefits infographic card for Russian marketplace. {colors}. "
+            f"Professional marketplace infographic card. {colors}. "
             f"Product: {product_desc}. "
-            f"Header: ПРЕИМУЩЕСТВА in bold. "
-            f"4 benefits listed vertically with colorful icons and short text. "
-            f"Clean minimal design. White background. Vertical format 900x1200px."
+            f"Bold Russian header ПРЕИМУЩЕСТВА at top. "
+            f"Product photo in center with dramatic studio lighting. "
+            f"4 benefit blocks below with icons and bold Russian text. "
+            f"Clean modern design. Vertical format."
         ),
         "before_after": (
-            f"Before/After comparison card for marketplace. {colors}. "
+            f"Before/After marketplace card. {colors}. "
             f"Product: {product_desc}. "
-            f"Left side labeled ДО with problem visualization. "
-            f"Right side labeled ПОСЛЕ with solution/result. "
-            f"Arrow between sides. Clean design. 900x1200px."
+            f"Left half: problem visualization labeled ДО in red bold text. "
+            f"Right half: solution with product labeled ПОСЛЕ in green bold text. "
+            f"White arrow between halves. Russian text. Professional design."
         ),
         "problem": (
-            f"Problem-Solution infographic for Russian marketplace. {colors}. "
+            f"Problem-Solution marketplace card. {colors}. "
             f"Product: {product_desc}. "
-            f"Top half: ПРОБЛЕМА section with pain point illustration. "
-            f"Bottom half: РЕШЕНИЕ section with product benefit. "
-            f"Bold Russian text. Clean design. 900x1200px."
+            f"Top section: ПРОБЛЕМА with problem icon and description in Russian. "
+            f"Bottom section: РЕШЕНИЕ showing product as solution. "
+            f"Bold Russian text. Modern design."
         ),
         "howto": (
-            f"How-to use instruction card for marketplace. {colors}. "
+            f"How-to-use marketplace instruction card. {colors}. "
             f"Product: {product_desc}. "
-            f"Title: КАК ИСПОЛЬЗОВАТЬ. "
-            f"3 numbered steps with simple icons and short Russian text. "
-            f"Clean step-by-step layout. 900x1200px."
+            f"Bold Russian title КАК ИСПОЛЬЗОВАТЬ at top. "
+            f"Product photo in center. "
+            f"3 numbered steps with icons and short Russian text below. "
+            f"Clean step-by-step layout."
         ),
         "compare": (
-            f"Comparison table infographic for marketplace. {colors}. "
+            f"Comparison table marketplace card. {colors}. "
             f"Product: {product_desc}. "
-            f"Two columns: НАШ ТОВАР vs ОБЫЧНЫЙ. "
-            f"4-5 comparison parameters with checkmarks and crosses. "
-            f"Our product column highlighted. 900x1200px."
+            f"Two columns: НАШ ТОВАР (highlighted, green checkmarks) vs ОБЫЧНЫЙ (red crosses). "
+            f"4-5 comparison rows in Russian. Our column has accent color background. "
+            f"Professional design."
         ),
         "kit": (
-            f"Kit contents card for marketplace. {colors}. "
+            f"Kit contents marketplace card. {colors}. "
             f"Product: {product_desc}. "
-            f"Title: В КОМПЛЕКТЕ. "
-            f"All included items numbered and labeled in Russian. "
-            f"Clean product layout on white background. 900x1200px."
+            f"Bold Russian title В КОМПЛЕКТЕ at top. "
+            f"All included items shown with numbers and Russian labels. "
+            f"Clean white/colored background. Professional product layout."
         ),
     }
 
     prompt = prompts.get(dalle_type, prompts["cover"])
-    WORKER_URL = "https://noisy-wildflower-187e.demo23rus.workers.dev"
+    OPENAI_WORKER = "https://openai-proxy.demo23rus.workers.dev"
     try:
-        async with httpx.AsyncClient(timeout=90) as hc:
-            r = await hc.post(WORKER_URL, json={
+        async with httpx.AsyncClient(timeout=120) as hc:
+            r = await hc.post(OPENAI_WORKER, json={
+                "model": "gpt-image-2",
                 "prompt": prompt,
-                "image_size": "portrait_4_3",
-                "num_inference_steps": 28,
-                "num_images": 1,
-            })
+                "n": 1,
+                "size": "1024x1536",
+                "quality": "medium",
+                "output_format": "url",
+            }, headers={"Authorization": f"Bearer {OPENAI_KEY}"})
             data = r.json()
-        img_url = data["images"][0]["url"]
-        return img_url
+        if "data" not in data:
+            raise Exception(f"OpenAI error: {data}")
+        b64 = data["data"][0].get("b64_json")
+        url = data["data"][0].get("url")
+        if b64:
+            img_bytes = base64.b64decode(b64)
+            tmp_path = f"/tmp/card_{dalle_type}_{int(asyncio.get_event_loop().time())}.jpg"
+            with open(tmp_path, "wb") as f:
+                f.write(img_bytes)
+            return f"file://{tmp_path}"
+        return url
     except Exception as e:
         raise Exception(f"Ошибка генерации изображения: {e}")
+
+async def download_img(img_url: str) -> bytes:
+    if img_url.startswith("file://"):
+        with open(img_url.replace("file://", ""), "rb") as f:
+            return f.read()
+    async with httpx.AsyncClient(timeout=60) as hc:
+        r = await hc.get(img_url)
+        return r.content
 
 # ─── ТРАНСКРИПЦИЯ ГОЛОСА ────────────────────────────────────
 async def transcribe(message: Message) -> str:
@@ -1523,9 +1547,7 @@ async def dalle_generate(message: Message, state: FSMContext):
         type_name = DALLE_TYPES.get(dtype, ("Карточка",""))[0]
         dalle_left = get_dalle(uid)
         save_history(uid, "dalle", f"{type_name}: {text[:100]}")
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
+        img_bytes = await download_img(img_url)
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
         await message.answer_photo(
             photo_file,
@@ -1564,9 +1586,7 @@ async def dalle_regen(call: CallbackQuery, state: FSMContext):
     try:
         img_url = await gen_dalle(dtype, last)
         dalle_left = get_dalle(uid)
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
+        img_bytes = await download_img(img_url)
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
         type_name = DALLE_TYPES.get(dtype, ("Карточка",""))[0]
         await call.message.answer_photo(
@@ -1787,28 +1807,30 @@ async def dalle_from_photo_generate(message: Message, state: FSMContext):
         }
         prompt = type_prompts.get(dtype, type_prompts["cover"])
 
-        # Шаг 2 — списываем 2 кредита и генерируем через Worker
+        # Шаг 2 — списываем 2 кредита и генерируем через OpenAI Worker
         use_dalle(uid)
         use_dalle(uid)
 
-        WORKER_URL = "https://noisy-wildflower-187e.demo23rus.workers.dev"
-        async with httpx.AsyncClient(timeout=90) as hc:
-            r = await hc.post(WORKER_URL, json={
+        OPENAI_WORKER = "https://openai-proxy.demo23rus.workers.dev"
+        async with httpx.AsyncClient(timeout=120) as hc:
+            r = await hc.post(OPENAI_WORKER, json={
+                "model": "gpt-image-2",
                 "prompt": prompt,
-                "image_url": image_url,
-                "image_size": "portrait_4_3",
-                "num_inference_steps": 28,
-                "strength": 0.75,
-                "num_images": 1,
-            })
-            fal_data = r.json()
-        img_url = fal_data["images"][0]["url"]
+                "n": 1,
+                "size": "1024x1536",
+                "quality": "medium",
+            }, headers={"Authorization": f"Bearer {OPENAI_KEY}"})
+            oai_data = r.json()
+        if "data" not in oai_data:
+            raise Exception(f"OpenAI error: {oai_data}")
+        b64 = oai_data["data"][0].get("b64_json")
+        img_url_result = oai_data["data"][0].get("url")
+        if b64:
+            img_bytes = base64.b64decode(b64)
+        else:
+            img_bytes = await download_img(img_url_result)
         type_name = DALLE_TYPES.get(dtype, ("Карточка", ""))[0]
         dalle_left = get_dalle(uid)
-
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
 
         save_history(uid, "dalle", f"Фото→{type_name}: {product_data.get('name','')}")
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
@@ -1968,9 +1990,7 @@ async def slideset_generate(message: Message, state: FSMContext):
         try:
             use_dalle(uid)
             img_url = await gen_dalle(dtype, text, platform)
-            async with httpx.AsyncClient() as hc:
-                r = await hc.get(img_url)
-                img_bytes = r.content
+            img_bytes = await download_img(img_url)
             photo_file = BufferedInputFile(img_bytes, filename=f"slide_{dtype}.jpg")
             await message.answer_photo(
                 photo_file,
