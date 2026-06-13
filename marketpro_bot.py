@@ -744,15 +744,24 @@ async def gen_dalle(dalle_type, product_desc, platform="wb"):
     }
 
     prompt = prompts.get(dalle_type, prompts["cover"])
-    resp = await openai.images.generate(
-        model="gpt-image-2",
-        prompt=prompt,
-        size="1024x1024",
-        quality="medium",
-        n=1
-    )
+    try:
+        resp = await asyncio.wait_for(
+            openai.images.generate(
+                model="gpt-image-2",
+                prompt=prompt,
+                size="1024x1024",
+                quality="low",
+                n=1
+            ),
+            timeout=120
+        )
+    except asyncio.TimeoutError:
+        raise Exception("Генерация заняла слишком долго. Попробуй ещё раз.")
     # gpt-image-2 возвращает base64
-    img_bytes = base64.b64decode(resp.data[0].b64_json)
+    b64 = resp.data[0].b64_json
+    if not b64:
+        raise Exception("Пустой ответ от API генерации изображений.")
+    img_bytes = base64.b64decode(b64)
     tmp_path = f"/tmp/dalle_{dalle_type}_{int(asyncio.get_event_loop().time())}.jpg"
     with open(tmp_path, "wb") as f:
         f.write(img_bytes)
