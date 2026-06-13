@@ -745,13 +745,18 @@ async def gen_dalle(dalle_type, product_desc, platform="wb"):
 
     prompt = prompts.get(dalle_type, prompts["cover"])
     resp = await openai.images.generate(
-        model="dall-e-3",
+        model="gpt-image-2",
         prompt=prompt,
         size="1024x1024",
-        quality="standard",
+        quality="medium",
         n=1
     )
-    return resp.data[0].url
+    # gpt-image-2 возвращает base64
+    img_bytes = base64.b64decode(resp.data[0].b64_json)
+    tmp_path = f"/tmp/dalle_{dalle_type}_{int(asyncio.get_event_loop().time())}.jpg"
+    with open(tmp_path, "wb") as f:
+        f.write(img_bytes)
+    return f"file://{tmp_path}"
 
 # ─── ТРАНСКРИПЦИЯ ГОЛОСА ────────────────────────────────────
 async def transcribe(message: Message) -> str:
@@ -1510,9 +1515,13 @@ async def dalle_generate(message: Message, state: FSMContext):
         type_name = DALLE_TYPES.get(dtype, ("Карточка",""))[0]
         dalle_left = get_dalle(uid)
         save_history(uid, "dalle", f"{type_name}: {text[:100]}")
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
+        if img_url.startswith("file://"):
+            with open(img_url.replace("file://", ""), "rb") as f:
+                img_bytes = f.read()
+        else:
+            async with httpx.AsyncClient() as hc:
+                r = await hc.get(img_url)
+                img_bytes = r.content
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
         await message.answer_photo(
             photo_file,
@@ -1551,9 +1560,13 @@ async def dalle_regen(call: CallbackQuery, state: FSMContext):
     try:
         img_url = await gen_dalle(dtype, last)
         dalle_left = get_dalle(uid)
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
+        if img_url.startswith("file://"):
+            with open(img_url.replace("file://", ""), "rb") as f:
+                img_bytes = f.read()
+        else:
+            async with httpx.AsyncClient() as hc:
+                r = await hc.get(img_url)
+                img_bytes = r.content
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
         type_name = DALLE_TYPES.get(dtype, ("Карточка",""))[0]
         await call.message.answer_photo(
@@ -1774,9 +1787,13 @@ async def dalle_from_photo_generate(message: Message, state: FSMContext):
         type_name = DALLE_TYPES.get(dtype, ("Карточка", ""))[0]
         dalle_left = get_dalle(uid)
 
-        async with httpx.AsyncClient() as hc:
-            r = await hc.get(img_url)
-            img_bytes = r.content
+        if img_url.startswith("file://"):
+            with open(img_url.replace("file://", ""), "rb") as f:
+                img_bytes = f.read()
+        else:
+            async with httpx.AsyncClient() as hc:
+                r = await hc.get(img_url)
+                img_bytes = r.content
 
         save_history(uid, "dalle", f"Фото→{type_name}: {product_data.get('name','')}")
         photo_file = BufferedInputFile(img_bytes, filename="infographic.jpg")
