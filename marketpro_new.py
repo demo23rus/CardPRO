@@ -351,6 +351,7 @@ def kb_main():
         [InlineKeyboardButton(text="🧮 Финансы и расчёты", callback_data="sec_finance")],
         [InlineKeyboardButton(text="⭐️ Работа с отзывами", callback_data="review_reply")],
         [InlineKeyboardButton(text="⚖️ Апелляции", callback_data="appeal")],
+        [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="tariffs")],
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="my_profile"),
          InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],
     ])
@@ -1581,6 +1582,44 @@ async def my_referral(call: CallbackQuery):
                 text="📤 Поделиться ссылкой",
                 switch_inline_query=f"Попробуй МаркетПРО — AI-помощник для WB и Ozon! {ref_link}"
             )],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
+        ])
+    )
+    await call.answer()
+
+# ─── ТАРИФЫ ─────────────────────────────────────────────────
+@dp.callback_query(F.data == "tariffs")
+async def show_tariffs(call: CallbackQuery):
+    uid = call.from_user.id
+    plan, sub_end = get_sub(uid)
+    remaining = get_remaining(uid)
+    if plan:
+        status = f"✅ Подписка активна до {sub_end.strftime('%d.%m.%Y')}"
+    else:
+        status = f"🆓 Бесплатный план — осталось запросов: {remaining}"
+    await call.message.answer(
+        f"💳 Тарифы МаркетПРО\n\n"
+        f"{status}\n\n"
+        f"🆓 БЕСПЛАТНО:\n"
+        f"• {FREE_REQUESTS} запросов для знакомства\n"
+        f"• Все функции доступны\n\n"
+        f"💳 ПОДПИСКА — {SUB_PRICE} ₽/месяц:\n"
+        f"• Безлимитные запросы\n"
+        f"• Карточки товаров из фото и текста\n"
+        f"• Аудит по тексту и ссылке WB/Ozon\n"
+        f"• Юнит-экономика и калькулятор поставки\n"
+        f"• Расчёт выгоды от акций маркетплейса\n"
+        f"• SEO-заголовки — 5 вариантов\n"
+        f"• Ответы на отзывы покупателей\n"
+        f"• Апелляции на штрафы и блокировки\n"
+        f"• Анализ ниши и конкурентов\n\n"
+        f"👥 РЕФЕРАЛКА:\n"
+        f"• Пригласи друга — +{REF_BONUS_INVITER} запросов тебе\n"
+        f"• Другу: +{REF_BONUS_INVITED} запросов\n"
+        f"• Друг купил подписку — ещё +5 запросов тебе",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💳 Оформить подписку — {SUB_PRICE} ₽/мес", callback_data="pay_sub")],
+            [InlineKeyboardButton(text="👥 Пригласить друга (+5 запросов)", callback_data="my_referral")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
         ])
     )
