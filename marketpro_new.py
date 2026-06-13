@@ -521,19 +521,21 @@ async def claude_vision(system, user_text, image_url):
         r = await hc.get(image_url)
         img_bytes = r.content
     b64 = base64.b64encode(img_bytes).decode()
-    # Определяем тип
     media_type = "image/jpeg"
     if img_bytes[:4] == b'\x89PNG': media_type = "image/png"
     elif img_bytes[:4] == b'RIFF': media_type = "image/webp"
-    resp = claude.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1500,
-        system=system,
-        messages=[{"role":"user","content":[
-            {"type":"image","source":{"type":"base64","media_type":media_type,"data":b64}},
-            {"type":"text","text":user_text}
-        ]}]
-    )
+    import asyncio
+    def _call():
+        return claude.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1500,
+            system=system,
+            messages=[{"role":"user","content":[
+                {"type":"image","source":{"type":"base64","media_type":media_type,"data":b64}},
+                {"type":"text","text":user_text}
+            ]}]
+        )
+    resp = await asyncio.to_thread(_call)
     return resp.content[0].text.strip()
 
 async def transcribe(message: Message) -> str:
