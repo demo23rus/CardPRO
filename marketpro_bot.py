@@ -750,7 +750,7 @@ async def gen_dalle(dalle_type, product_desc, platform="wb"):
             r = await hc.post(WORKER_URL, json={
                 "prompt": prompt,
                 "image_size": "portrait_4_3",
-                "num_inference_steps": 4,
+                "num_inference_steps": 28,
                 "num_images": 1,
             })
             data = r.json()
@@ -1770,20 +1770,39 @@ async def dalle_from_photo_generate(message: Message, state: FSMContext):
         raw = re.sub(r"```json|```", "", raw).strip()
         product_data = json.loads(raw)
 
-        # Формируем описание для DALL-E
-        desc = (
-            f"{product_data.get('name', 'товар')}. "
-            f"Материал: {product_data.get('material', '')}. "
-            f"Применение: {product_data.get('use', '')}. "
-            f"Характеристики: {product_data.get('features', '')}. "
-            f"Преимущества: {', '.join(product_data.get('benefits', []))}"
-        )
+        # Формируем промпт для карточки на основе анализа Claude
+        name = product_data.get('name', 'товар')
+        benefits = product_data.get('benefits', [])
+        benefits_str = " | ".join(benefits[:4])
+        features = product_data.get('features', '')
 
-        # Шаг 2 — списываем 2 кредита и генерируем через DALL-E
+        type_prompts = {
+            "cover":        f"Professional Wildberries/Ozon marketplace product card infographic. The product in the photo is: {name}. Keep the product clearly visible and centered. Add a clean dark purple gradient banner at the bottom third of the image. On the banner write in bold white Russian text the product name and 3 key features: {features}. Modern flat commercial design. High CTR marketplace card style.",
+            "benefits":     f"Marketplace infographic card for product: {name}. Product photo on top. Clean white panel at bottom with bold header ПРЕИМУЩЕСТВА and 4 bullet points: {benefits_str}. Purple accent colors. Russian text. Professional design.",
+            "before_after": f"Before/after marketplace card for: {name}. Split image. Left side labeled ДО in red. Right side labeled ПОСЛЕ in green showing product benefits: {benefits_str}. Russian text. Clean design.",
+            "howto":        f"How-to-use card for marketplace product: {name}. Product photo. Numbered panel КАК ИСПОЛЬЗОВАТЬ with 3 steps. Purple design. Russian text.",
+            "compare":      f"Comparison table card for: {name}. НАШ ТОВАР column with green checkmarks ({benefits_str}) vs ОБЫЧНЫЙ column with red crosses. Purple header. Russian text.",
+            "problem":      f"Problem-solution card. ПРОБЛЕМА section showing pain point. РЕШЕНИЕ section showing {name} with benefits {benefits_str}. Purple design. Russian text.",
+            "kit":          f"Kit contents card for: {name}. В КОМПЛЕКТЕ section listing all included items numbered. Clean white/purple design. Russian text.",
+        }
+        prompt = type_prompts.get(dtype, type_prompts["cover"])
+
+        # Шаг 2 — списываем 2 кредита и генерируем через Worker
         use_dalle(uid)
         use_dalle(uid)
 
-        img_url = await gen_dalle(dtype, desc)
+        WORKER_URL = "https://noisy-wildflower-187e.demo23rus.workers.dev"
+        async with httpx.AsyncClient(timeout=90) as hc:
+            r = await hc.post(WORKER_URL, json={
+                "prompt": prompt,
+                "image_url": image_url,
+                "image_size": "portrait_4_3",
+                "num_inference_steps": 28,
+                "strength": 0.75,
+                "num_images": 1,
+            })
+            fal_data = r.json()
+        img_url = fal_data["images"][0]["url"]
         type_name = DALLE_TYPES.get(dtype, ("Карточка", ""))[0]
         dalle_left = get_dalle(uid)
 
