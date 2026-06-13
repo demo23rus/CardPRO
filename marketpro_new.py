@@ -559,8 +559,13 @@ async def gen_card_photo(platform, image_url):
     rules = PLATFORM_RULES.get(platform, PLATFORM_RULES["wb"])
     system = ("Ты эксперт по карточкам маркетплейсов. Пишешь только на русском. "
               "Определи тип товара на фото (не называй бренды), создай карточку. "
+              "Если на фото нет товара (человек, животное, пейзаж, еда, документ) — "
+              "ответь ТОЛЬКО словом: НЕТОВАРА "
               "Никогда не начинай с 'Конечно', 'Отлично'. Никакого markdown!\n\n" + rules)
-    return await claude_vision(system, "Определи товар и создай карточку.", image_url)
+    result = await claude_vision(system, "Определи товар и создай карточку. Если это не товар для маркетплейса — ответь НЕТОВАРА", image_url)
+    if "НЕТОВАРА" in result:
+        raise ValueError("НЕТОВАРА")
+    return result
 
 async def gen_review(text):
     system = ("Ты менеджер маркетплейса. Пишешь живые ответы на отзывы покупателей. "
@@ -931,7 +936,9 @@ async def platform_chosen(call: CallbackQuery, state: FSMContext):
         await state.set_state(CardStates.waiting_photo)
         await call.message.answer(
             f"Платформа: {plat_name}\n\n"
-            "📷 Отправь фото товара:",
+            "📷 Отправь фото товара\n\n"
+            "⚠️ Важно: отправь фото именно товара, не людей и не пейзажей. "
+            "Чем лучше видно товар — тем точнее получится карточка.",
             reply_markup=kb_back()
         )
     else:
@@ -963,6 +970,15 @@ async def card_from_photo(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="🔄 Другой вариант", callback_data="make_card_photo")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
         ]))
+    except ValueError:
+        await message.answer(
+            "⚠️ На фото не похоже на товар для маркетплейса.\n\n"
+            "Отправь фото именно того товара, который ты продаёшь на WB, Ozon или Авито.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📸 Отправить другое фото", callback_data="make_card_photo")],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_menu")],
+            ])
+        )
     except Exception as e:
         logging.error(f"card_photo error: {e}")
         await message.answer("❌ Ошибка. Попробуй ещё раз.", reply_markup=kb_back())
