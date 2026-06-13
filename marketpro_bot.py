@@ -1468,7 +1468,10 @@ async def sec_dalle(call: CallbackQuery, state: FSMContext):
     )
     await call.answer()
 
-@dp.callback_query(F.data.startswith("dalle_"), DalleStates.choose_type)
+@dp.callback_query(
+    F.data.startswith("dalle_") & ~F.data.in_({"dalle_from_photo", "dalle_slideset"}),
+    DalleStates.choose_type
+)
 async def dalle_choose(call: CallbackQuery, state: FSMContext):
     dtype = call.data.replace("dalle_","")
     uid = call.from_user.id
