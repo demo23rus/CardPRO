@@ -1201,6 +1201,12 @@ class ImportFlow(StatesGroup):
     waiting = State()
 
 
+class QuickIntentFlow(StatesGroup):
+    choose_platform = State()
+    choose_photo_action = State()
+    brand_mismatch = State()
+
+
 def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     buttons = []
     for row in rows:
@@ -1559,13 +1565,12 @@ async def brandkit_start(call: CallbackQuery, state: FSMContext):
     await edit_or_answer(call, "🎨 BRAND KIT" + preview + "\n\nОтправьте одним сообщением: название бренда; тон; цвета; шрифты; визуальный стиль; аудитория; запрещённые фразы.", back_kb("products"))
 
 
-@router.message(BrandFlow.waiting, F.text)
-async def brandkit_save(message: Message, state: FSMContext):
-    prompt = f"Разбери описание Brand Kit в JSON с ключами brand_name,tone,colors,fonts,visual_style,target_audience,forbidden_phrases:\n{message.text}"
+async def _save_brandkit_text(message: Message, state: FSMContext, source_text: str) -> None:
+    prompt = f"Разбери описание Brand Kit в JSON с ключами brand_name,tone,colors,fonts,visual_style,target_audience,forbidden_phrases:\n{source_text}"
     try:
         data = await AI.json("Ты бренд-стратег. Не добавляй факты, которых нет.", prompt, max_tokens=700)
     except Exception:
-        data = {"brand_name": "", "tone": "профессиональный", "colors": "", "fonts": "", "visual_style": message.text, "target_audience": "", "forbidden_phrases": ""}
+        data = {"brand_name": "", "tone": "профессиональный", "colors": "", "fonts": "", "visual_style": source_text, "target_audience": "", "forbidden_phrases": ""}
     await DB.execute("""INSERT INTO brand_kits(user_id,brand_name,tone,colors,fonts,visual_style,target_audience,forbidden_phrases,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET brand_name=excluded.brand_name,tone=excluded.tone,
         colors=excluded.colors,fonts=excluded.fonts,visual_style=excluded.visual_style,target_audience=excluded.target_audience,
@@ -1573,6 +1578,50 @@ async def brandkit_save(message: Message, state: FSMContext):
         (message.from_user.id, data.get("brand_name", ""), data.get("tone", ""), data.get("colors", ""), data.get("fonts", ""), data.get("visual_style", ""), data.get("target_audience", ""), data.get("forbidden_phrases", ""), iso_now()))
     await state.clear()
     await message.answer("✅ Brand Kit сохранён и будет применяться в карточках, ответах и визуальных промтах.", reply_markup=back_kb("products"))
+
+
+@router.message(BrandFlow.waiting, F.text)
+async def brandkit_save(message: Message, state: FSMContext):
+    text_value = (message.text or "").strip()
+    structured = text_value.count(";") >= 3 or any(
+        marker in text_value.lower()
+        for marker in ("бренд:", "тон:", "цвет", "шрифт", "аудитор", "стиль:", "запрещ")
+    )
+    if not structured and len(text_value) < 140:
+        await state.update_data(pending_brand_text=text_value)
+        await state.set_state(QuickIntentFlow.brand_mismatch)
+        await message.answer(
+            "Похоже, вы отправили описание товара, а сейчас открыт Brand Kit.\n\nЧто сделать с этим текстом?",
+            reply_markup=kb([
+                [("🚀 Создать карточку", "brand_to_card"), ("🎨 Сохранить как Brand Kit", "brand_force_save")],
+                [("❌ Отменить", "home")],
+            ]),
+        )
+        return
+    await _save_brandkit_text(message, state, text_value)
+
+
+@router.callback_query(F.data == "brand_force_save", QuickIntentFlow.brand_mismatch)
+async def brand_force_save(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text_value = data.get("pending_brand_text", "")
+    await call.answer()
+    await _save_brandkit_text(call.message, state, text_value)
+
+
+@router.callback_query(F.data == "brand_to_card", QuickIntentFlow.brand_mismatch)
+async def brand_to_card(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(QuickIntentFlow.choose_platform)
+    await state.update_data(quick_text=data.get("pending_brand_text", ""))
+    await edit_or_answer(
+        call,
+        "Выберите площадку для карточки:",
+        kb([
+            [("🟣 Wildberries", "quickplat_wb"), ("🔵 Ozon", "quickplat_ozon")],
+            [("🟡 Авито", "quickplat_avito"), ("🏠 Меню", "home")],
+        ]),
+    )
 
 
 # --- Analytics --------------------------------------------------------------
@@ -2261,17 +2310,164 @@ async def cancel(message: Message, state: FSMContext):
     await state.clear(); await message.answer("Действие отменено.", reply_markup=main_kb())
 
 
+# Быстрый вход из главного меню ------------------------------------------------
+def looks_like_marketplace_url(value: str) -> bool:
+    low = value.lower()
+    return ("wildberries.ru" in low or "wb.ru" in low or "ozon.ru" in low or "avito.ru" in low) and ("http://" in low or "https://" in low)
+
+
+@router.callback_query(F.data.startswith("quickplat_"), QuickIntentFlow.choose_platform)
+async def quick_platform_chosen(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text_value = (data.get("quick_text") or "").strip()
+    platform = call.data.replace("quickplat_", "")
+    if not text_value:
+        await state.clear()
+        await call.answer("Описание товара потеряно. Отправьте его ещё раз.", show_alert=True)
+        return
+    if not await access_or_paywall(call, "card360_text"):
+        await state.clear()
+        return
+    await call.answer()
+    progress = await call.message.answer("⏳ Создаю карточку 360°...")
+    try:
+        result = await generate_card360(call.from_user.id, platform, text_value)
+        hid = await save_history(call.from_user.id, "card360_quick", text_value, result, metadata={"platform": platform})
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+        await answer_long(
+            call.message,
+            result,
+            kb([
+                [("💾 Сохранить как товар", f"savehist_{hid}"), ("📄 Экспорт TXT", f"export_{hid}")],
+                [("🔄 Новая карточка", "card360"), ("🏠 Меню", "home")],
+            ]),
+        )
+    except Exception as exc:
+        await refund(call.from_user.id, "card360_text")
+        log.exception("quick card360")
+        await call.message.answer(f"❌ Не удалось создать карточку: {exc}", reply_markup=back_kb("card360"))
+    await state.clear()
+
+
+@router.callback_query(F.data == "quick_photo_card", QuickIntentFlow.choose_photo_action)
+async def quick_photo_card(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    file_id = data.get("quick_photo_file_id")
+    if not file_id:
+        await state.clear()
+        await call.answer("Фото не найдено. Отправьте его ещё раз.", show_alert=True)
+        return
+    await call.answer()
+    try:
+        file = await call.bot.get_file(file_id)
+        bio = await call.bot.download_file(file.file_path)
+        image = bio.read()
+        recognized = await AI.vision(
+            "Ты товаровед. Определи только видимые характеристики товара. Не угадывай бренд, материал и комплектность. Если это не товар, ответь НЕ_ТОВАР.",
+            "Опиши товар максимально точно для последующего создания карточки маркетплейса. Отдельно перечисли неизвестные данные.",
+            image,
+            "image/jpeg",
+        )
+        if "НЕ_ТОВАР" in recognized.upper():
+            raise ValueError("На фото не удалось распознать товар")
+        await state.set_state(QuickIntentFlow.choose_platform)
+        await state.update_data(quick_text=recognized)
+        await call.message.answer(
+            "Товар распознан. Выберите площадку:",
+            reply_markup=kb([
+                [("🟣 Wildberries", "quickplat_wb"), ("🔵 Ozon", "quickplat_ozon")],
+                [("🟡 Авито", "quickplat_avito"), ("🏠 Меню", "home")],
+            ]),
+        )
+    except Exception as exc:
+        await state.clear()
+        await call.message.answer(f"❌ {exc}", reply_markup=main_kb())
+
+
+@router.callback_query(F.data == "quick_photo_audit", QuickIntentFlow.choose_photo_action)
+async def quick_photo_audit(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    file_id = data.get("quick_photo_file_id")
+    if not file_id:
+        await state.clear()
+        await call.answer("Фото не найдено. Отправьте его ещё раз.", show_alert=True)
+        return
+    if not await access_or_paywall(call, "audit"):
+        await state.clear()
+        return
+    await call.answer()
+    try:
+        file = await call.bot.get_file(file_id)
+        bio = await call.bot.download_file(file.file_path)
+        result = await AI.vision(
+            AUDIT_SYSTEM,
+            "Разбери этот скриншот. Сначала перечисли, что точно видно; затем проблемы, риски, приоритетные действия и данные, которых не хватает.",
+            bio.read(),
+            "image/jpeg",
+        )
+        hid = await save_history(call.from_user.id, "audit_screenshot_quick", "screenshot", result)
+        await answer_long(call.message, result, kb([[("📄 Экспорт", f"export_{hid}"), ("🏠 Меню", "home")]]))
+    except Exception as exc:
+        await refund(call.from_user.id, "audit")
+        await call.message.answer(f"❌ {exc}", reply_markup=main_kb())
+    await state.clear()
+
+
 # Fallbacks
 @router.message(F.text)
 async def fallback_text(message: Message, state: FSMContext):
-    if await state.get_state() is None:
-        await message.answer("Выберите задачу из меню. Для отмены текущего шага используйте /cancel.", reply_markup=main_kb())
+    if await state.get_state() is not None:
+        return
+    text_value = (message.text or "").strip()
+    if not text_value:
+        return
+
+    if looks_like_marketplace_url(text_value):
+        if not await access_or_paywall(message, "audit_link"):
+            return
+        try:
+            card = await MP.fetch_public_card(text_value)
+            source = card_data_text(card)
+            await message.answer("✅ Получены реальные публичные данные:\n\n" + source[:1500])
+            result = await audit_content(source, "Метрики кабинета не переданы; выводы по воронке являются гипотезами.")
+            hid = await save_history(message.from_user.id, "audit_link_quick", text_value, result, metadata=card)
+            await answer_long(message, result, kb([[("📄 Экспорт", f"export_{hid}"), ("🏠 Меню", "home")]]))
+        except Exception as exc:
+            await refund(message.from_user.id, "audit_link")
+            await message.answer(
+                f"⚠️ Не удалось достоверно получить карточку: {exc}\n\nПришлите скриншот карточки — бот не станет выдумывать данные.",
+                reply_markup=main_kb(),
+            )
+        return
+
+    await state.set_state(QuickIntentFlow.choose_platform)
+    await state.update_data(quick_text=text_value)
+    await message.answer(
+        "Похоже, вы хотите создать карточку товара. Выберите площадку:",
+        reply_markup=kb([
+            [("🟣 Wildberries", "quickplat_wb"), ("🔵 Ozon", "quickplat_ozon")],
+            [("🟡 Авито", "quickplat_avito"), ("❌ Это не товар", "home")],
+        ]),
+    )
 
 
 @router.message(F.photo)
 async def fallback_photo(message: Message, state: FSMContext):
-    if await state.get_state() is None:
-        await message.answer("Фото можно использовать в «Карточка 360°» или «Аудит скриншота».", reply_markup=main_kb())
+    if await state.get_state() is not None:
+        return
+    photo = message.photo[-1]
+    await state.set_state(QuickIntentFlow.choose_photo_action)
+    await state.update_data(quick_photo_file_id=photo.file_id)
+    await message.answer(
+        "Что сделать с этим изображением?",
+        reply_markup=kb([
+            [("🚀 Создать карточку", "quick_photo_card"), ("🔍 Провести аудит", "quick_photo_audit")],
+            [("🏠 Меню", "home")],
+        ]),
+    )
 
 
 # ============================================================================
