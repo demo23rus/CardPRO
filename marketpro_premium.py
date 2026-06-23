@@ -4546,6 +4546,17 @@ async def create_payment(call: CallbackQuery):
             "capture": True,
             "description": f"МаркетПРО {PLANS[plan]['name']} — 30 дней",
             "metadata": {"user_id": str(call.from_user.id), "plan": plan},
+            "receipt": {
+                "customer": {"email": "client@marketpro.ru"},
+                "items": [{
+                    "description": f"МаркетПРО {PLANS[plan]['name']} 30 дней",
+                    "quantity": "1.00",
+                    "amount": {"value": f"{PLANS[plan]['price']}.00", "currency": "RUB"},
+                    "vat_code": 1,
+                    "payment_subject": "service",
+                    "payment_mode": "full_payment"
+                }]
+            },
         }, str(uuid.uuid4()))
         await DB.execute("INSERT INTO payments(payment_id,user_id,plan,amount,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
                          (p.id, call.from_user.id, plan, PLANS[plan]["price"], "pending", iso_now(), iso_now()))
